@@ -1,0 +1,9 @@
+paho-mqtt>=2.0
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.8
+scikit-learn>=1.4
+tensorflow>=2.15
+keyboard>=0.13.5; platform_system == "Windows"
+pynput>=1.7; platform_system != "Windows"
+pyserial>=3.5

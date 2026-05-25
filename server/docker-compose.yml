@@ -1,0 +1,81 @@
+version: "3.8"
+
+# Server stack cho dự án USTH Sensor: MQTT -> InfluxDB -> Grafana + Node-RED.
+# Mọi service chạy local trên laptop sinh viên. Mặc định KHÔNG bật TLS/auth
+# để đơn giản hóa demo môn học. Đừng expose ra Internet.
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: usth_mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"   # WebSocket cho Node-RED dashboard nếu cần
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+
+  influxdb:
+    image: influxdb:2.7
+    container_name: usth_influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: usth-sensor-2026
+      DOCKER_INFLUXDB_INIT_ORG: usth
+      DOCKER_INFLUXDB_INIT_BUCKET: pdr
+      DOCKER_INFLUXDB_INIT_RETENTION: 30d
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: usth-sensor-admin-token-change-me
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+      - influxdb_config:/etc/influxdb2
+
+  telegraf:
+    image: telegraf:1.30
+    container_name: usth_telegraf
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+      - influxdb
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: usth_grafana
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+
+  nodered:
+    image: nodered/node-red:3.1
+    container_name: usth_nodered
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    ports:
+      - "1880:1880"
+    environment:
+      TZ: Asia/Ho_Chi_Minh
+    volumes:
+      - ./nodered/data:/data
+
+volumes:
+  influxdb_data:
+  influxdb_config:
+  grafana_data:

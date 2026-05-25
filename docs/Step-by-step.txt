@@ -1,0 +1,86 @@
+
+=============================================================================  
+  Milestone 1 — Mosquitto + Node-RED + simulator 
+=============================================================================
+  Không cần ESP32 ngay. Đây là phase rủi ro thấp nhất.
+
+  cd "E:\Khoa hoc\USTH\Sensor\Project\server"
+  docker compose up -d mosquitto nodered
+  cd ..\tools
+  pip install paho-mqtt
+  python simulate_device.py --broker 127.0.0.1
+
+  Pass khi:
+  - ✅ Mở http://localhost:1880/ui thấy quỹ đạo hình chữ nhật chạy
+  - ✅ Activity đổi theo chu kỳ stand→walk→run→…
+  - ✅ Bấm nút "Reset quỹ đạo" thì canvas xóa sạch
+  - ✅ mosquitto_sub -t 'usth/pdr/#' -v thấy đủ 4 loại message
+
+ Chốt: pipeline MQTT-Node-RED hoạt động độc lập với firmware
+
+=============================================================================
+  Milestone 2 — ESP32 gửi data thật, chưa inference 
+=============================================================================
+  Đây là milestone "quan trọng tâm lý" — lần đầu thấy thiết bị chạy.
+
+  Sửa 1 chỗ duy nhất: trong firmware/src/config.h đổi WIFI_SSID, WIFI_PASSWORD, MQTT_HOST.
+
+  Tạm thời bypass inference: Trong main.cpp, comment block inference, để publish thẳng raw + giả 1 activity cố định:
+
+  // TODO milestone 2: bypass inference, publish raw + fake activity
+  mqttc::enableRawStream(true);
+  inference::Result fake = { ACT_WALK, 0.9f, {0,0.9f,0,0} };
+  PubMsg m{}; m.kind = PUB_ACTIVITY; m.act = fake; enqueuePub(m);
+
+  Pass khi:
+  - ✅ Serial monitor thấy [IMU] MPU6050 OK, [MQTT] connect ... OK
+  - ✅ Trên Node-RED dashboard thấy ESP32 (device id mới) chạy bên cạnh simulator
+  - ✅ Khi lắc cảm biến, accel norm dao động trên Grafana raw chart
+  - ✅ Khi đứng yên 30s, accel norm về ~9.8 m/s² (gravity)
+
+  Chốt: I2C wiring đúng, WiFi/MQTT đúng, calibration cần làm tới mức nào.
+
+=============================================================================
+  Milestone 3 — Inference đơn giản chạy on-device (2-3 buổi)
+=============================================================================
+  Bạn đã có sẵn cái này: trong inference.cpp có USE_TFLITE = 0 đang chạy heuristic variance-based classifier. Đây CHÍNH LÀ "model đơn giản" — không cần TFLite, không cần train,
+   dùng được luôn.
+
+  Hủy bypass ở milestone 2, để inference task chạy bình thường.
+
+  Pass khi:
+  - ✅ Đứng yên 10s → dashboard hiện stand
+  - ✅ Đi quanh phòng 10s → đổi sang walk
+  - ✅ Chạy nhẹ tại chỗ → đổi sang run
+  - ✅ Step count tăng theo nhịp bước thật (đếm tay, so sánh)
+  - ✅ Quỹ đạo trên Node-RED có hình dạng giống hướng bạn đi (chấp nhận drift)
+
+  Chốt: pipeline 100Hz → window → preprocess → classify → publish có hoạt động không. Latency hợp lý không. RAM đủ không.
+
+  Lưu ý: heuristic này không chính xác với bước chân nhanh chậm khác nhau, nhưng đủ để chứng minh pipeline làm việc. Đây là điểm rất quan trọng cho milestone 4.
+
+=============================================================================
+  Milestone 4 — Thay heuristic bằng model thật (1-2 tuần)
+=============================================================================
+  Lúc này bạn đã biết pipeline đúng → chỉ còn dữ liệu và model là biến.
+
+  # 4.1 Thu data (5-10 phút mỗi class, đa người càng tốt)
+  mosquitto_pub -t usth/pdr/cmd/raw_on -m on
+  python collect_label.py --out data/sess1.csv
+
+  # 4.2 Train
+  python train_har.py --data "data/*.csv" --out model/
+
+  # 4.3 Deploy
+  copy model\model_data.h ..\firmware\src\model_data.h
+  # Sua inference.cpp: #define USE_TFLITE 1
+  # Sua platformio.ini: them lib TensorFlowLite_ESP32
+  pio run -e esp32dev -t upload
+
+  Pass khi:
+  - ✅ F1 trên validation set > 0.85
+  - ✅ On-device latency < 50 ms
+  - ✅ Confusion matrix không quá lệch về 1 class
+  - ✅ Đi thử trực tiếp → activity hiển thị đúng > 90% thời gian
+
+  Chốt: ML pipeline thật. Bao gồm cả "ồ class này thiếu data", "ồ model lệch quá".

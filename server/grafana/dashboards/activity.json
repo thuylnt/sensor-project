@@ -1,0 +1,82 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": true,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Activity confidence",
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-PDR" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"pdr\")\n  |> range(start: -10m)\n  |> filter(fn: (r) => r._measurement == \"activity\" and r._field == \"confidence\")\n  |> aggregateWindow(every: 1s, fn: mean, createEmpty: false)"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Step count",
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-PDR" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"pdr\")\n  |> range(start: -1h)\n  |> filter(fn: (r) => r._measurement == \"step\" and r._field == \"count\")\n  |> last()"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Cadence (steps/min)",
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-PDR" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"pdr\")\n  |> range(start: -5m)\n  |> filter(fn: (r) => r._measurement == \"step\" and r._field == \"cadence\")\n  |> mean()"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Position x / y",
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-PDR" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"pdr\")\n  |> range(start: -10m)\n  |> filter(fn: (r) => r._measurement == \"pose\" and (r._field == \"x\" or r._field == \"y\"))"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Heading (deg)",
+      "datasource": { "type": "influxdb", "uid": "InfluxDB-PDR" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: \"pdr\")\n  |> range(start: -10m)\n  |> filter(fn: (r) => r._measurement == \"pose\" and r._field == \"heading_deg\")"
+        }
+      ]
+    }
+  ],
+  "refresh": "1s",
+  "schemaVersion": 39,
+  "tags": ["usth", "pdr"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "USTH PDR - Activity & Motion",
+  "uid": "usth-pdr-activity",
+  "version": 1,
+  "weekStart": ""
+}

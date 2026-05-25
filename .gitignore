@@ -1,0 +1,28 @@
+# PlatformIO
+firmware/.pio/
+firmware/.vscode/
+
+# Python
+**/__pycache__/
+**/.venv/
+**/*.pyc
+
+# Data thu thap (co the rat lon)
+tools/data/
+tools/model/
+tools/calib.json
+
+# Docker volumes co the chua data tay
+server/mosquitto/data/
+server/mosquitto/log/
+
+# Node-RED runtime
+server/nodered/data/.flows.json.backup
+server/nodered/data/.config.runtime.json
+server/nodered/data/.config.users.json
+server/nodered/data/.npm/
+server/nodered/data/node_modules/
+
+# Secrets
+*.env
+*.key
