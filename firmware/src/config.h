@@ -1,5 +1,5 @@
 #pragma once
-
+#include <Arduino.h>
 // =======================
 // Cau hinh chung
 // =======================
@@ -10,7 +10,7 @@
 //       -> dung de verify I2C + WiFi + MQTT + dashboard hien data
 //   3 = full pipeline voi heuristic inference (variance-based, khong can model file)
 //   4 = full pipeline voi TFLite int8 model that (USE_TFLITE=1 trong inference.cpp)
-#define MILESTONE_LEVEL 3
+#define MILESTONE_LEVEL 2
 
 // === Device ID xuat hien trong MQTT topic usth/pdr/<DEVICE_ID>/... ===
 #define DEVICE_ID "dev01"
@@ -24,11 +24,11 @@
 
 // === WiFi ===
 // Sua truoc khi flash. Khong commit credentials that vao git.
-#define WIFI_SSID "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID "USTH_Student"
+#define WIFI_PASSWORD "usth2021!"
 
 // === MQTT broker ===
-#define MQTT_HOST "192.168.1.100"   // IP laptop chay docker-compose
+#define MQTT_HOST "10.10.12.111"   // IP laptop chay docker-compose
 #define MQTT_PORT 1883
 #define MQTT_KEEPALIVE 30
 

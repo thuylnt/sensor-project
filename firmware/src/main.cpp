@@ -183,6 +183,17 @@ void setup() {
     }
 
     calibration::Data cal;
+
+    cal.acc_bias[0]  =  0.4922122367123288;
+    cal.acc_bias[1]  =  0.3514496893150685;
+    cal.acc_bias[2]  =  0.5198670405479452;
+    cal.acc_scale[0] =  24.684351696952486;
+    cal.acc_scale[1] =  134.5428105915762;
+    cal.acc_scale[2] =  0.4990798737874918;
+    cal.gyro_bias[0] =  -0.016543828493150683;
+    cal.gyro_bias[1] =  0.07364579726027397;
+    cal.gyro_bias[2] =  -0.01200866496080274;
+
     if (calibration::load(cal)) {
         Serial.println("[CAL] loaded from NVS");
     } else {

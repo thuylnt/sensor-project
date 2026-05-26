@@ -36,16 +36,16 @@
   cd "E:\Khoa hoc\USTH\Sensor\Project\firmware"
 
   # Build (compile + link, chua flash)
-  pio run
+  pio run -e esp32dev
 
   # Build + upload qua USB
-  pio run -t upload
+  pio run -e esp32dev -t upload
 
   # Mo serial monitor (115200 baud, da set trong platformio.ini)
   pio device monitor
 
   # Build + upload + monitor 1 phat
-  pio run -t upload -t monitor
+  pio run -e esp32dev -t upload -t monitor
 
   # Clean cache (khi gap loi la)
   pio run -t clean
@@ -61,10 +61,10 @@
 
   # 3. Build truoc xem co loi syntax khong
   cd "E:\Khoa hoc\USTH\Sensor\Project\firmware"
-  pio run
+  pio run -e esp32dev 
 
   # 4. Neu OK -> upload
-  pio run -t upload
+  pio run -e esp32dev  -t upload
 
   # 5. Mo monitor xem ESP32 boot len va in log gi
   pio device monitor
