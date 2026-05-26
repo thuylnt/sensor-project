@@ -1,0 +1,95 @@
+Đã có gì trên dashboard
+
+  Tab "PDR" với 4 group
+
+  1. Quy đạo (12 cột) — canvas chính 900×520
+  2. Activity (6 cột) — text "ACT walk 0.92"
+  3. Heading (3 cột) — compass widget
+  4. Control (3 cột) — nút Reset
+
+  Canvas trajectory
+
+  ┌─────────────────────┬────────────────────────────────────────────────────────────────────────────────────┐
+  │      Tính năng      │                                     Hoạt động                                      │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Pan                 │ Drag chuột (cursor đổi grab ↔ grabbing)                                            │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Zoom                │ Wheel — zoom về phía con trỏ chuột (Google Maps style)                             │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Fit all             │ Nút auto-zoom vừa khít cả 3 path + reference rectangle                             │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Center (0,0)        │ Reset view về tâm, scale mặc định 25 px/m                                          │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Clear local paths   │ Xóa point hiển thị (không gửi cmd về ESP32)                                        │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Reset quỹ đạo       │ Nút bên Control group → gửi MQTT cmd reset về ESP32                                │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ 3 trajectory        │ Đỏ Raw / Cam Calib / Xanh Full, mỗi đường có riêng buffer 3000 point               │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Legend              │ Góc trên-trái, ghi tên + màu + đếm point. Nếu chưa có data thì xám + chữ "no data" │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Reference rectangle │ Hình chữ nhật xanh nhạt 10×5m ở (0,0), đường kẻ đứt                                │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Trail fade          │ 150 point gần nhất full opacity, sau đó mờ dần đến alpha 0.12                      │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Grid                │ Tự điều chỉnh density theo zoom level (×5 khi cell quá nhỏ, ÷5 khi quá to)         │
+  ├─────────────────────┼────────────────────────────────────────────────────────────────────────────────────┤
+  │ Scale label         │ Góc dưới-phải hiển thị "25.0 px/m"                                                 │
+  └─────────────────────┴────────────────────────────────────────────────────────────────────────────────────┘
+
+  Compass widget
+
+  - 160×160 px, vẽ tròn có N/E/S/W + tick mark mỗi 30°
+  - Kim nam châm: đỏ chỉ N, xám chỉ S, xoay theo heading_deg
+  - Số góc dưới kim
+  - Subscribe cùng topic pose nên auto-update
+
+  Simulator — publish 3 path
+
+  Mặc định bật --three-paths. Mỗi step, drift accumulate:
+  - Raw: 0.10°/step → ~11°/phút @ 110 spm (đi hình vuông sau 1 vòng sẽ thấy raw bay xa)
+  - Calib: 0.03°/step → ~3°/phút (calib gần đúng nhưng vẫn drift)
+  - Full: 0° drift (ground truth)
+
+  Tinh chỉnh khi demo:
+  python simulate_device.py --drift-raw-deg 0.2 --drift-calib-deg 0.05
+  # Drift to hon -> 3 path tach ra nhanh hon -> demo de thay
+
+  Tắt 3 path (chỉ chạy 1 đường full như trước):
+  python simulate_device.py --no-three-paths
+
+  Thực hiện
+
+  # Restart Node-RED de load flows.json moi
+  docker compose restart nodered
+
+  # Truy cap http://localhost:1880 -> Deploy (neu can)
+  # Truy cap http://localhost:1880/ui -> tab PDR
+
+  # Bat simulator
+  cd tools
+  python simulate_device.py --broker 127.0.0.1
+
+  Khi chạy trên ESP32 thật
+
+  ESP32 hiện tại chỉ publish pose (full). Bạn sẽ thấy:
+  - 🟢 Full (calib+HAR): có data, vẽ đường
+  - 🟠 Calibrated: legend xám, ghi "no data"
+  - 🔴 Raw (no calib): legend xám, ghi "no data"
+
+  Đúng như bạn yêu cầu — đường nào chưa có data thì không vẽ + ghi rõ trong legend. Khi nào refactor firmware để publish cả 3 (như đã bàn — biến PDR thành class có thể instantiate nhiều
+  lần), 3 đường sẽ tự xuất hiện không cần đổi dashboard.
+
+  Kiểm thử nhanh sau khi restart Node-RED
+
+  1. Mở http://localhost:1880/ui → tab PDR
+  2. Chạy python simulate_device.py
+  3. Trong 30s đầu sẽ thấy:
+    - 3 đường bắt đầu cùng (0,0), từ từ tách nhau
+    - Reference rectangle 10×5m mờ ở background
+    - Compass quay theo hướng đi
+    - Activity text đổi theo cycle
+  4. Thử kéo chuột → canvas pan
+  5. Lăn wheel ở 1 điểm bất kỳ → zoom về điểm đó
+  6. Bấm Fit all → cả 3 path + reference rectangle hiện đủ trong canvas
+  7. Bấm Reset quỹ đạo (đỏ) → ESP32-side reset, đồng thời canvas clear

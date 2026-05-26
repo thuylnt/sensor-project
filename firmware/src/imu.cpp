@@ -1,5 +1,6 @@
 #include "imu.h"
 #include "config.h"
+#include "i2c_bus.h"
 #include <Wire.h>
 #include <MPU6050.h>
 
@@ -43,7 +44,9 @@ void applyCalibration(const float acc_bias[3], const float acc_scale[3], const f
 
 bool read(ImuSample& s) {
     int16_t ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw;
+    if (!i2c_bus::lock(20)) return false;   // OLED dang refresh, bo qua sample nay
     mpu.getMotion6(&ax_raw, &ay_raw, &az_raw, &gx_raw, &gy_raw, &gz_raw);
+    i2c_bus::unlock();
 
     float ax = (ax_raw / ACC_LSB_PER_G) * GRAVITY_MS2;
     float ay = (ay_raw / ACC_LSB_PER_G) * GRAVITY_MS2;

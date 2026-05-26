@@ -4,7 +4,7 @@
     "type": "tab",
     "label": "USTH PDR",
     "disabled": false,
-    "info": "Quy dao 2D + activity hien tai + nut reset"
+    "info": "Quy dao 2D voi pan/zoom, 3 duong (raw/calib/full), reference rectangle, trail fade, compass"
   },
   {
     "id": "mqtt_broker",
@@ -49,38 +49,98 @@
     "collapse": false
   },
   {
+    "id": "ui_group_compass",
+    "type": "ui_group",
+    "name": "Heading",
+    "tab": "ui_tab_main",
+    "order": 3,
+    "disp": true,
+    "width": "3",
+    "collapse": false
+  },
+  {
     "id": "ui_group_ctrl",
     "type": "ui_group",
     "name": "Control",
     "tab": "ui_tab_main",
-    "order": 3,
+    "order": 4,
     "disp": true,
-    "width": "6",
+    "width": "3",
     "collapse": false
   },
   {
-    "id": "in_pose",
+    "id": "in_pose_full",
     "type": "mqtt in",
     "z": "tab_pdr",
-    "name": "pose",
+    "name": "pose (full)",
     "topic": "usth/pdr/+/pose",
     "qos": "0",
     "datatype": "json",
     "broker": "mqtt_broker",
     "x": 130,
-    "y": 80,
-    "wires": [["fn_pose"]]
+    "y": 60,
+    "wires": [["fn_pose_full"]]
   },
   {
-    "id": "fn_pose",
+    "id": "in_pose_calib",
+    "type": "mqtt in",
+    "z": "tab_pdr",
+    "name": "pose_calib",
+    "topic": "usth/pdr/+/pose_calib",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "x": 130,
+    "y": 110,
+    "wires": [["fn_pose_calib"]]
+  },
+  {
+    "id": "in_pose_raw",
+    "type": "mqtt in",
+    "z": "tab_pdr",
+    "name": "pose_raw",
+    "topic": "usth/pdr/+/pose_raw",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "x": 130,
+    "y": 160,
+    "wires": [["fn_pose_raw"]]
+  },
+  {
+    "id": "fn_pose_full",
     "type": "function",
     "z": "tab_pdr",
-    "name": "to {x,y}",
-    "func": "msg.payload = { x: msg.payload.x, y: msg.payload.y, heading: msg.payload.heading_deg };\nreturn msg;",
+    "name": "tag full",
+    "func": "msg.payload = { source: 'full', x: msg.payload.x, y: msg.payload.y, heading_deg: msg.payload.heading_deg };\nreturn msg;",
     "outputs": 1,
     "noerr": 0,
     "x": 320,
-    "y": 80,
+    "y": 60,
+    "wires": [["ui_traj", "ui_compass"]]
+  },
+  {
+    "id": "fn_pose_calib",
+    "type": "function",
+    "z": "tab_pdr",
+    "name": "tag calib",
+    "func": "msg.payload = { source: 'calib', x: msg.payload.x, y: msg.payload.y, heading_deg: msg.payload.heading_deg };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 320,
+    "y": 110,
+    "wires": [["ui_traj"]]
+  },
+  {
+    "id": "fn_pose_raw",
+    "type": "function",
+    "z": "tab_pdr",
+    "name": "tag raw",
+    "func": "msg.payload = { source: 'raw', x: msg.payload.x, y: msg.payload.y, heading_deg: msg.payload.heading_deg };\nreturn msg;",
+    "outputs": 1,
+    "noerr": 0,
+    "x": 320,
+    "y": 160,
     "wires": [["ui_traj"]]
   },
   {
@@ -91,14 +151,14 @@
     "name": "Trajectory Canvas",
     "order": 1,
     "width": "12",
-    "height": "10",
-    "format": "<canvas id=\"traj\" width=\"800\" height=\"500\" style=\"background:#fafafa;border:1px solid #ccc\"></canvas>\n<script>\n(function(scope){\n  var pts=[];var canvas=document.getElementById('traj');\n  var ctx=canvas.getContext('2d');\n  var ox=canvas.width/2, oy=canvas.height/2, scale=20;\n  function redraw(){\n    ctx.clearRect(0,0,canvas.width,canvas.height);\n    ctx.strokeStyle='#ddd';ctx.beginPath();\n    for(var i=-20;i<=20;i++){ctx.moveTo(ox+i*scale,0);ctx.lineTo(ox+i*scale,canvas.height);}\n    for(var i=-15;i<=15;i++){ctx.moveTo(0,oy+i*scale);ctx.lineTo(canvas.width,oy+i*scale);}\n    ctx.stroke();\n    ctx.strokeStyle='#1976d2';ctx.lineWidth=2;ctx.beginPath();\n    pts.forEach(function(p,i){var x=ox+p.x*scale,y=oy-p.y*scale;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});\n    ctx.stroke();\n    if(pts.length){var last=pts[pts.length-1];ctx.fillStyle='#d32f2f';ctx.beginPath();ctx.arc(ox+last.x*scale,oy-last.y*scale,5,0,2*Math.PI);ctx.fill();}\n  }\n  scope.$watch('msg.payload',function(p){if(!p)return;if(p.reset){pts=[];redraw();return;}pts.push({x:p.x,y:p.y});if(pts.length>3000)pts.shift();redraw();});\n})(scope);\n</script>",
+    "height": "12",
+    "format": "<canvas id=\"traj\" width=\"900\" height=\"520\" style=\"background:#fafafa;border:1px solid #ccc;cursor:grab;display:block\"></canvas>\n<div style=\"margin-top:6px;font-size:12px;color:#555\">\n  <span>Drag = pan &nbsp;•&nbsp; Wheel = zoom (toward cursor)</span>\n  <button onclick=\"window._trajFit()\" style=\"margin-left:10px\">Fit all</button>\n  <button onclick=\"window._trajCenter()\" style=\"margin-left:4px\">Center (0,0)</button>\n  <button onclick=\"window._trajClear()\" style=\"margin-left:4px;background:#fdd;border:1px solid #d99\">Clear local paths</button>\n</div>\n<script>\n(function(scope){\n  var paths = {\n    raw:   { pts: [], color: '#e53935', label: 'Raw (no calib)',   hasData: false },\n    calib: { pts: [], color: '#fb8c00', label: 'Calibrated',       hasData: false },\n    full:  { pts: [], color: '#43a047', label: 'Full (calib+HAR)', hasData: false }\n  };\n  var canvas = document.getElementById('traj');\n  var ctx = canvas.getContext('2d');\n  var ox = canvas.width/2, oy = canvas.height/2;\n  var scale = 25;\n  var isDrag = false, dragStart = null;\n  var refRect = { x0: 0, y0: 0, w: 10, h: 5, label: 'Reference 10x5 m' };\n\n  function w2s(p){ return { x: ox + p.x*scale, y: oy - p.y*scale }; }\n  function s2w(s){ return { x: (s.x-ox)/scale, y: -(s.y-oy)/scale }; }\n\n  function drawGrid(){\n    var step = scale; while(step < 18) step *= 5; while(step > 200) step /= 5;\n    ctx.strokeStyle = '#eee'; ctx.lineWidth = 1;\n    var startX = ox - Math.ceil(ox/step)*step;\n    var startY = oy - Math.ceil(oy/step)*step;\n    for (var x = startX; x < canvas.width; x += step){\n      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke();\n    }\n    for (var y = startY; y < canvas.height; y += step){\n      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke();\n    }\n    ctx.strokeStyle = '#bbb'; ctx.lineWidth = 1;\n    if (ox >= 0 && ox <= canvas.width){ ctx.beginPath(); ctx.moveTo(ox,0); ctx.lineTo(ox,canvas.height); ctx.stroke(); }\n    if (oy >= 0 && oy <= canvas.height){ ctx.beginPath(); ctx.moveTo(0,oy); ctx.lineTo(canvas.width,oy); ctx.stroke(); }\n  }\n  function drawRefRect(){\n    var s1 = w2s({x: refRect.x0, y: refRect.y0});\n    var s2 = w2s({x: refRect.x0 + refRect.w, y: refRect.y0 + refRect.h});\n    var rx = Math.min(s1.x, s2.x), ry = Math.min(s1.y, s2.y);\n    var rw = Math.abs(s2.x - s1.x), rh = Math.abs(s1.y - s2.y);\n    ctx.fillStyle = 'rgba(33,150,243,0.06)';\n    ctx.fillRect(rx, ry, rw, rh);\n    ctx.strokeStyle = '#90caf9'; ctx.lineWidth = 1.5;\n    ctx.setLineDash([6,4]); ctx.strokeRect(rx, ry, rw, rh); ctx.setLineDash([]);\n    ctx.fillStyle = '#1976d2'; ctx.font = '11px sans-serif';\n    ctx.fillText(refRect.label, rx + 4, ry + 14);\n  }\n  function drawPath(p){\n    if (!p.hasData || p.pts.length < 2) return;\n    var n = p.pts.length, FADE_TAIL = 150;\n    ctx.lineWidth = 2.2;\n    ctx.strokeStyle = p.color;\n    for (var i = 1; i < n; i++){\n      var age = n - 1 - i;\n      var alpha = age < FADE_TAIL ? 1 : Math.max(0.12, 1 - (age - FADE_TAIL) / 600);\n      ctx.globalAlpha = alpha;\n      var s1 = w2s(p.pts[i-1]), s2 = w2s(p.pts[i]);\n      ctx.beginPath(); ctx.moveTo(s1.x, s1.y); ctx.lineTo(s2.x, s2.y); ctx.stroke();\n    }\n    ctx.globalAlpha = 1;\n    var last = w2s(p.pts[n-1]);\n    ctx.fillStyle = p.color;\n    ctx.beginPath(); ctx.arc(last.x, last.y, 5.5, 0, 2*Math.PI); ctx.fill();\n    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;\n    ctx.beginPath(); ctx.arc(last.x, last.y, 5.5, 0, 2*Math.PI); ctx.stroke();\n  }\n  function drawLegend(){\n    var entries = [paths.raw, paths.calib, paths.full];\n    var lineH = 20, padX = 10, padY = 8;\n    var x0 = 10, y0 = 10, w = 200, h = lineH*entries.length + padY*2;\n    ctx.fillStyle = 'rgba(255,255,255,0.92)';\n    ctx.fillRect(x0, y0, w, h);\n    ctx.strokeStyle = '#ddd'; ctx.strokeRect(x0, y0, w, h);\n    ctx.font = '12px sans-serif'; ctx.textBaseline = 'middle';\n    entries.forEach(function(p, i){\n      var y = y0 + padY + i*lineH + lineH/2;\n      ctx.strokeStyle = p.hasData ? p.color : '#ccc';\n      ctx.lineWidth = 3;\n      ctx.beginPath(); ctx.moveTo(x0 + padX, y); ctx.lineTo(x0 + padX + 28, y); ctx.stroke();\n      ctx.fillStyle = p.hasData ? '#222' : '#999';\n      ctx.fillText(p.label + (p.hasData ? ' (' + p.pts.length + ')' : ' — no data'), x0 + padX + 36, y);\n    });\n    ctx.textBaseline = 'alphabetic';\n  }\n  function drawScaleHint(){\n    var txt = scale.toFixed(1) + ' px/m';\n    ctx.font = '11px sans-serif';\n    var w = ctx.measureText(txt).width;\n    ctx.fillStyle = 'rgba(255,255,255,0.9)';\n    ctx.fillRect(canvas.width - w - 16, canvas.height - 24, w + 12, 18);\n    ctx.fillStyle = '#666';\n    ctx.fillText(txt, canvas.width - w - 10, canvas.height - 10);\n  }\n  function redraw(){\n    ctx.clearRect(0,0,canvas.width,canvas.height);\n    drawGrid();\n    drawRefRect();\n    drawPath(paths.raw);\n    drawPath(paths.calib);\n    drawPath(paths.full);\n    drawLegend();\n    drawScaleHint();\n  }\n\n  canvas.addEventListener('mousedown', function(e){\n    isDrag = true; dragStart = { x: e.offsetX, y: e.offsetY, ox: ox, oy: oy };\n    canvas.style.cursor = 'grabbing';\n  });\n  canvas.addEventListener('mousemove', function(e){\n    if (!isDrag) return;\n    ox = dragStart.ox + (e.offsetX - dragStart.x);\n    oy = dragStart.oy + (e.offsetY - dragStart.y);\n    redraw();\n  });\n  function endDrag(){ isDrag = false; canvas.style.cursor = 'grab'; }\n  canvas.addEventListener('mouseup', endDrag);\n  canvas.addEventListener('mouseleave', endDrag);\n  canvas.addEventListener('wheel', function(e){\n    e.preventDefault();\n    var factor = e.deltaY < 0 ? 1.18 : 1/1.18;\n    var ns = scale * factor;\n    if (ns < 2 || ns > 250) return;\n    var mx = e.offsetX, my = e.offsetY;\n    var w = s2w({ x: mx, y: my });\n    scale = ns;\n    ox = mx - w.x * scale;\n    oy = my + w.y * scale;\n    redraw();\n  }, { passive: false });\n\n  window._trajFit = function(){\n    var all = [].concat(paths.raw.pts, paths.calib.pts, paths.full.pts);\n    if (all.length < 2){ ox=canvas.width/2; oy=canvas.height/2; scale=25; redraw(); return; }\n    var xs = all.map(function(p){return p.x;});\n    var ys = all.map(function(p){return p.y;});\n    var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);\n    var minY = Math.min.apply(null, ys), maxY = Math.max.apply(null, ys);\n    minX = Math.min(minX, refRect.x0); maxX = Math.max(maxX, refRect.x0 + refRect.w);\n    minY = Math.min(minY, refRect.y0); maxY = Math.max(maxY, refRect.y0 + refRect.h);\n    var w = Math.max(1, maxX - minX), h = Math.max(1, maxY - minY);\n    var pad = 60;\n    var sx = (canvas.width - 2*pad) / w;\n    var sy = (canvas.height - 2*pad) / h;\n    scale = Math.min(Math.max(2, Math.min(sx, sy)), 200);\n    ox = canvas.width/2 - (minX + maxX)/2 * scale;\n    oy = canvas.height/2 + (minY + maxY)/2 * scale;\n    redraw();\n  };\n  window._trajCenter = function(){ ox = canvas.width/2; oy = canvas.height/2; scale = 25; redraw(); };\n  window._trajClear = function(){\n    paths.raw.pts.length = 0;   paths.raw.hasData = false;\n    paths.calib.pts.length = 0; paths.calib.hasData = false;\n    paths.full.pts.length = 0;  paths.full.hasData = false;\n    redraw();\n  };\n  canvas.style.cursor = 'grab';\n\n  scope.$watch('msg.payload', function(p){\n    if (!p) return;\n    if (p.reset){ window._trajClear(); return; }\n    var src = p.source || 'full';\n    if (!paths[src]) return;\n    paths[src].pts.push({ x: p.x, y: p.y });\n    paths[src].hasData = true;\n    if (paths[src].pts.length > 3000) paths[src].pts.shift();\n    redraw();\n  });\n  redraw();\n})(scope);\n</script>",
     "storeOutMessages": true,
     "fwdInMessages": true,
     "resendOnRefresh": false,
     "templateScope": "local",
-    "x": 520,
-    "y": 80,
+    "x": 540,
+    "y": 110,
     "wires": [[]]
   },
   {
@@ -111,7 +171,7 @@
     "datatype": "json",
     "broker": "mqtt_broker",
     "x": 130,
-    "y": 180,
+    "y": 240,
     "wires": [["ui_act"]]
   },
   {
@@ -126,9 +186,27 @@
     "label": "Hoat dong hien tai",
     "format": "{{msg.payload.class}} ({{msg.payload.confidence | number:2}})",
     "layout": "row-spread",
-    "x": 330,
-    "y": 180,
+    "x": 320,
+    "y": 240,
     "wires": []
+  },
+  {
+    "id": "ui_compass",
+    "type": "ui_template",
+    "z": "tab_pdr",
+    "group": "ui_group_compass",
+    "name": "Heading Compass",
+    "order": 1,
+    "width": "3",
+    "height": "4",
+    "format": "<canvas id=\"compass\" width=\"160\" height=\"160\" style=\"display:block;margin:auto\"></canvas>\n<script>\n(function(scope){\n  var canvas = document.getElementById('compass');\n  var ctx = canvas.getContext('2d');\n  var heading = 0;\n  function draw(){\n    ctx.clearRect(0,0,160,160);\n    var cx = 80, cy = 80, r = 68;\n    ctx.strokeStyle = '#999'; ctx.lineWidth = 2;\n    ctx.beginPath(); ctx.arc(cx, cy, r, 0, 2*Math.PI); ctx.stroke();\n    for (var a = 0; a < 360; a += 30){\n      var rad = a * Math.PI / 180;\n      var tickLen = (a % 90 === 0) ? 10 : 5;\n      ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1.5;\n      ctx.beginPath();\n      ctx.moveTo(cx + (r - tickLen) * Math.sin(rad), cy - (r - tickLen) * Math.cos(rad));\n      ctx.lineTo(cx + r * Math.sin(rad), cy - r * Math.cos(rad));\n      ctx.stroke();\n    }\n    ctx.font = 'bold 14px sans-serif';\n    ctx.fillStyle = '#666';\n    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';\n    ctx.fillText('N', cx, cy - r + 14);\n    ctx.fillText('E', cx + r - 14, cy);\n    ctx.fillText('S', cx, cy + r - 14);\n    ctx.fillText('W', cx - r + 14, cy);\n    ctx.save(); ctx.translate(cx, cy); ctx.rotate(heading * Math.PI / 180);\n    ctx.fillStyle = '#d32f2f';\n    ctx.beginPath();\n    ctx.moveTo(0, -r + 20); ctx.lineTo(-9, 0); ctx.lineTo(0, 8); ctx.lineTo(9, 0); ctx.closePath(); ctx.fill();\n    ctx.fillStyle = '#bbb';\n    ctx.beginPath();\n    ctx.moveTo(0, r - 20); ctx.lineTo(-9, 0); ctx.lineTo(0, -8); ctx.lineTo(9, 0); ctx.closePath(); ctx.fill();\n    ctx.fillStyle = '#333';\n    ctx.beginPath(); ctx.arc(0, 0, 5, 0, 2*Math.PI); ctx.fill();\n    ctx.restore();\n    ctx.font = '13px sans-serif';\n    ctx.fillStyle = '#333';\n    ctx.fillText(heading.toFixed(0) + '°', cx, cy + r + 10);\n    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';\n  }\n  draw();\n  scope.$watch('msg.payload', function(p){\n    if (!p) return;\n    var h = (typeof p.heading_deg === 'number') ? p.heading_deg : p.heading;\n    if (typeof h !== 'number') return;\n    heading = h;\n    draw();\n  });\n})(scope);\n</script>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "x": 550,
+    "y": 60,
+    "wires": [[]]
   },
   {
     "id": "btn_reset",
@@ -137,7 +215,7 @@
     "name": "Reset trajectory",
     "group": "ui_group_ctrl",
     "order": 1,
-    "width": "6",
+    "width": "3",
     "height": "2",
     "label": "Reset quy dao",
     "color": "white",
@@ -146,18 +224,18 @@
     "payloadType": "str",
     "topic": "usth/pdr/cmd/reset",
     "x": 140,
-    "y": 280,
+    "y": 340,
     "wires": [["mqtt_out_cmd", "ui_traj_reset"]]
   },
   {
     "id": "ui_traj_reset",
     "type": "function",
     "z": "tab_pdr",
-    "name": "reset canvas",
+    "name": "send reset to canvas",
     "func": "return { payload: { reset: true } };",
     "outputs": 1,
-    "x": 360,
-    "y": 280,
+    "x": 380,
+    "y": 340,
     "wires": [["ui_traj"]]
   },
   {
@@ -169,8 +247,8 @@
     "qos": "0",
     "retain": "false",
     "broker": "mqtt_broker",
-    "x": 360,
-    "y": 340,
+    "x": 380,
+    "y": 400,
     "wires": []
   }
 ]

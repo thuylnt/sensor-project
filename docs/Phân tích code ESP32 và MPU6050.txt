@@ -1,0 +1,56 @@
+Phân tích code của thầy
+
+  Cấu trúc — đơn giản, sạch
+
+  setup()         loop()
+    ├ Wire        ├ mpu.update()
+    ├ MPU init    ├ display.clearDisplay()
+    ├ calcOffsets ├ in serial accel/gyro
+    ├ OLED init   ├ in display accel/gyro/temp
+    └ font setup  └ display.display() + delay(100)
+
+  Một loop đơn luồng, 10 Hz update. Dễ hiểu cho người mới.
+
+  Hardware setup ngầm hiểu
+
+  - MPU6050 ở địa chỉ I2C mặc định 0x68
+  - SSD1306 OLED 128×64 ở địa chỉ 0x3C
+  - Cả hai chia sẻ cùng bus I2C trên SDA=21, SCL=22
+  - Single-thread loop() nên không cần mutex
+
+  Đặc biệt — 3 điểm đáng chú ý
+
+  1. Dùng MPU6050_light thay vì electroniccats/MPU6050 (lib mình chọn). Đây là 2 lib khác nhau:
+    - MPU6050_light của tockn — API ngắn gọn, có sẵn getAccX(), getAccY()...
+    - electroniccats/MPU6050 của Jeff Rowberg — API thấp hơn (getMotion6()), nhiều control hơn nhưng dài dòng
+    - Cả 2 đều OK cho project của bạn. Lib của thầy "thân thiện" hơn cho beginner.
+  2. mpu.calcOffsets() là một dạng calibration "bỏ túi":
+    - Tự động đo bias accel + gyro trong vài giây khi boot
+    - Giả định chip đang nằm yên, mặt phẳng (Z up) lúc calib
+    - Chỉ tính bias, không tính scale → chính xác kém hơn 6-face calibration mình thiết kế
+    - Ưu điểm: không cần lật, không cần file, tự động — phù hợp demo nhanh
+    - Nhược điểm: nếu boot khi chip không phẳng → bias sai vĩnh viễn
+    - Bạn có thể tham khảo cái này nếu muốn thay 6-face calib bằng phiên bản đơn giản hơn
+  3. Layout OLED khá khéo — 4 dòng với label rõ ràng, accel + gyro + temp đầy đủ trong 64px chiều cao.
+
+  Tìm thấy 2 lỗi nhỏ trong code thầy
+
+  display.setTextSize(1.5);
+  Hàm setTextSize() nhận uint8_t, không hỗ trợ phân số. 1.5 sẽ bị truncate thành 1. Vô tình giống setTextSize(1). Để chữ to hơn thật sự dùng setTextSize(2).
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { // Address 0x3C for 128x32
+  Comment nói 128×32 nhưng constructor Adafruit_SSD1306(128, 64, &Wire) khai báo 128×64. Inconsistent — chắc copy-paste rồi quên sửa comment.
+
+  ---
+  Bổ sung OLED vào project của bạn — đề xuất
+
+  Có nên thêm? OLED đem lại 2 giá trị thực tế:
+  - Demo "có gì đó vật lý nhìn được" mà không cần laptop bật dashboard
+  - Báo cáo có ảnh chụp "thiết bị standalone" — đẹp hơn nhiều so với ảnh terminal
+
+  Nhược điểm cần biết:
+  1. I2C contention: Trong code thầy single-thread không sao. Code chúng ta có 2 task FreeRTOS — sensor task đọc IMU @ 100Hz, display task ghi OLED → phải có mutex để 2 task không gọi Wire
+   cùng lúc (sẽ ra dữ liệu rác).
+  2. Tốc độ refresh OLED qua I2C: 1 lần display.display() push 1024 byte (full buffer) ≈ 25 ms @ 400 kHz. Trong 25 ms đó, sensor task không đọc được IMU. Update OLED 4 Hz → mất ~10%
+  sample/giây. Đủ tốt nhưng không miễn phí.
+  3. Cần thêm phần cứng: bạn có sẵn OLED SSD1306 0.96" không? Nếu chưa có, ~30-50k VND trên Nhật Tảo/Shopee.

@@ -120,17 +120,27 @@ def main():
     ap.add_argument("--no-activity-cycle", action="store_true",
                     help="luon publish activity = walk")
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--three-paths", action="store_true", default=True,
+                    help="publish them pose_raw va pose_calib voi drift gia lap (mac dinh BAT)")
+    ap.add_argument("--no-three-paths", dest="three_paths", action="store_false",
+                    help="chi publish pose (full), khong gia drift")
+    ap.add_argument("--drift-raw-deg", type=float, default=0.10,
+                    help="heading drift moi step cho 'raw' (deg)")
+    ap.add_argument("--drift-calib-deg", type=float, default=0.03,
+                    help="heading drift moi step cho 'calib' (deg)")
     args = ap.parse_args()
 
     if args.seed is not None:
         random.seed(args.seed)
 
     base = f"usth/pdr/{args.device}"
-    topic_act    = f"{base}/activity"
-    topic_step   = f"{base}/step"
-    topic_pose   = f"{base}/pose"
-    topic_status = f"{base}/status"
-    topic_raw    = f"{base}/raw"
+    topic_act        = f"{base}/activity"
+    topic_step       = f"{base}/step"
+    topic_pose       = f"{base}/pose"           # full pipeline (ground truth)
+    topic_pose_calib = f"{base}/pose_calib"     # with small drift
+    topic_pose_raw   = f"{base}/pose_raw"       # with larger drift
+    topic_status     = f"{base}/status"
+    topic_raw        = f"{base}/raw"
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
                          client_id=f"sim-{args.device}")
@@ -138,6 +148,8 @@ def main():
     client.loop_start()
     print(f"[SIM] connected {args.broker}:{args.port}, publishing as {args.device}")
     print(f"[SIM] pattern={args.pattern}  cadence={args.cadence} spm  raw={args.raw}")
+    if args.three_paths:
+        print(f"[SIM] three-paths: drift raw={args.drift_raw_deg}deg/step  calib={args.drift_calib_deg}deg/step")
 
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *a: stop.set())
@@ -145,12 +157,17 @@ def main():
     def publish(topic, payload, retain=False):
         client.publish(topic, json.dumps(payload), qos=0, retain=retain)
 
-    # State
+    # State - 3 song song: full (ground truth), calib (drift nho), raw (drift lon)
     pos_x, pos_y = 0.0, 0.0
     heading = 0.0
     step_count = 0
     gen = PATTERNS[args.pattern]()
     t_start = time.time()
+    # Drift accumulate per step (degrees, them vao true heading)
+    drift_raw = 0.0
+    drift_calib = 0.0
+    pos_raw = [0.0, 0.0]
+    pos_calib = [0.0, 0.0]
 
     # Tan suat
     base_step_interval = 60.0 / max(1e-3, args.cadence) / args.speed
@@ -192,6 +209,16 @@ def main():
                 pos_y += dy
                 step_count += 1
                 stride = math.hypot(dx, dy)
+                # 2 path bi sai heading - accumulate per step
+                if args.three_paths:
+                    drift_raw   += args.drift_raw_deg
+                    drift_calib += args.drift_calib_deg
+                    h_raw   = math.radians(heading + drift_raw)
+                    h_calib = math.radians(heading + drift_calib)
+                    pos_raw[0]   += stride * math.sin(h_raw)
+                    pos_raw[1]   += stride * math.cos(h_raw)
+                    pos_calib[0] += stride * math.sin(h_calib)
+                    pos_calib[1] += stride * math.cos(h_calib)
                 cadence_spm = 60.0 / (now - last_step_t) if last_step_t else args.cadence
                 publish(topic_step, {
                     "ts": int(now * 1000),
@@ -201,7 +228,7 @@ def main():
                 })
                 last_step_t = now
 
-        # 3) Pose 1 Hz
+        # 3) Pose 1 Hz - publish full + (optional) calib/raw
         if now - last_pose_t >= 1.0:
             publish(topic_pose, {
                 "ts": int(now * 1000),
@@ -209,6 +236,19 @@ def main():
                 "y": round(pos_y, 3),
                 "heading_deg": round(heading, 1),
             })
+            if args.three_paths:
+                publish(topic_pose_calib, {
+                    "ts": int(now * 1000),
+                    "x": round(pos_calib[0], 3),
+                    "y": round(pos_calib[1], 3),
+                    "heading_deg": round(heading + drift_calib, 1),
+                })
+                publish(topic_pose_raw, {
+                    "ts": int(now * 1000),
+                    "x": round(pos_raw[0], 3),
+                    "y": round(pos_raw[1], 3),
+                    "heading_deg": round(heading + drift_raw, 1),
+                })
             last_pose_t = now
 
         # 4) Status retained moi 10s

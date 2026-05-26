@@ -1,0 +1,84 @@
+Cách chuyển giữa các milestone
+
+  Mở firmware/src/config.h dòng đầu, đổi giá trị MILESTONE_LEVEL:
+
+  #define MILESTONE_LEVEL 2     // chuyen sang milestone 2
+  // (mac dinh la 3 = full pipeline voi heuristic)
+
+  Build và flash lại:
+  cd firmware
+  pio run -e esp32dev -t upload
+
+  Xong. Không phải comment dòng nào.
+
+  Mỗi mức làm gì
+
+  ┌───────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │ Level │                                                Hành vi firmware                                                │
+  ├───────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 1     │ Không build firmware. Bạn chỉ chạy simulate_device.py để học pipeline phía server.                             │
+  ├───────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │       │ ESP32 đọc IMU thật, gửi raw 100 Hz, gửi activity giả "walk" mỗi giây với confidence 0.9. Không gọi             │
+  │ 2     │ inference::classify(). Vẫn chạy step detector, vẫn vẽ quỹ đạo (nhưng vì luôn walk, mỗi peak gia tốc sẽ được    │
+  │       │ tính là step → cầm trong tay lắc cũng đếm bước).                                                               │
+  ├───────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 3     │ Full pipeline. Heuristic variance-based classifier phân biệt stand/walk/run/stairs dựa trên RMS gia tốc. Không │
+  │       │  cần model file. Đây là default.                                                                               │
+  ├───────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 4     │ Khi đã có model_data.h từ training: cần thêm bước đổi USE_TFLITE = 1 trong inference.cpp và uncomment lib TFLM │
+  │       │  trong platformio.ini.                                                                                         │
+  └───────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  Verify milestone 2 đang chạy đúng
+
+  Sau khi flash:
+
+  Serial monitor (pio device monitor -b 115200) phải in:
+  [BRINGUP] MILESTONE_LEVEL <= 2 -> bypass inference, enable raw stream
+  Serial monitor (pio device monitor -b 115200) phải in:
+  [BRINGUP] MILESTONE_LEVEL <= 2 -> bypass inference, enable raw stream
+  [IMU] MPU6050 OK
+  [NET] WiFi connecting ... OK
+  [MQTT] connect ... OK
+
+  Terminal khác chạy:
+  [NET] WiFi connecting ... OK
+  [MQTT] connect ... OK
+
+  Terminal khác chạy:
+  mosquitto_sub -h <broker> -t 'usth/pdr/dev01/raw' -v
+  → Phải thấy ~100 dòng/giây với ax,ay,az,gx,gy,gz. Khi bạn lắc cảm biến → giá trị thay đổi mạnh; để yên trên bàn → az ≈ 9.81, các trục khác ≈ 0 (sau khi calib).
+
+  Node-RED dashboard (http://localhost:1880/ui) → tab PDR phải hiện:
+  - Activity = walk (luôn luôn, không đổi)
+  - Quỹ đạo bắt đầu vẽ ngay khi bạn rung lắc cảm biến (vì PDR coi mỗi peak là 1 step)
+
+  Nếu cả 3 thứ trên đều OK → bạn pass milestone 2, đổi MILESTONE_LEVEL = 3 để sang milestone tiếp.
+
+  Verify milestone 2 đang chạy đúng
+
+  Sau khi flash:
+
+  Serial monitor (pio device monitor -b 115200) phải in:
+  [BRINGUP] MILESTONE_LEVEL <= 2 -> bypass inference, enable raw stream
+  [IMU] MPU6050 OK
+  [NET] WiFi connecting ... OK
+  [MQTT] connect ... OK
+
+  Terminal khác chạy:
+  mosquitto_sub -h <broker> -t 'usth/pdr/dev01/raw' -v
+  → Phải thấy ~100 dòng/giây với ax,ay,az,gx,gy,gz. Khi bạn lắc cảm biến → giá trị thay đổi mạnh; để yên trên bàn → az ≈ 9.81, các trục khác ≈ 0 (sau khi calib).
+
+  Node-RED dashboard (http://localhost:1880/ui) → tab PDR phải hiện:
+  - Activity = walk (luôn luôn, không đổi)
+  - Quỹ đạo bắt đầu vẽ ngay khi bạn rung lắc cảm biến (vì PDR coi mỗi peak là 1 step)
+
+  Nếu cả 3 thứ trên đều OK → bạn pass milestone 2, đổi MILESTONE_LEVEL = 3 để sang milestone tiếp.
+
+  Nếu serial monitor in [IMU] MPU6050 connection FAILED
+
+  Đây là dấu hiệu wiring sai. Check:
+  - SDA → GPIO 21, SCL → GPIO 22 (mặc định ESP32 Arduino I2C)
+  - VCC MPU6050 → 3.3V (không phải 5V — sẽ chết chip)
+  - GND chung
+  - Module MPU6050 đã có pull-up resistor sẵn (đa số module GY-521 có); nếu là chip trần thì cần 4.7kΩ pull-up trên SDA/SCL

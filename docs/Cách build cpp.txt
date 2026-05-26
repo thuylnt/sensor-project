@@ -1,0 +1,127 @@
+ PlatformIO không quan tâm bạn có 1 hay 20 file .cpp — nó tự compile mọi thứ trong src/. Workflow build/upload giống y hệt dự án 1 file trước đây của bạn.
+
+  Khác biệt duy nhất so với dự án cũ
+
+  ┌───────────────────────────────┬──────────────────────────────────────────────────────────────────────────────┐
+  │          Cũ (1 file)          │                               Mới (nhiều file)                               │
+  ├───────────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+  │ src/main.cpp                  │ src/main.cpp + src/imu.cpp + src/pdr.cpp + ...                               │
+  ├───────────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+  │ Mọi #include ngay trong main  │ main.cpp include imu.h, pdr.h... còn .cpp tự tham chiếu .h của mình          │
+  ├───────────────────────────────┼──────────────────────────────────────────────────────────────────────────────┤
+  │ Khi build, gcc compile 1 file │ gcc compile 20 file, sau đó linker ghép lại thành 1 firmware binary duy nhất │
+  └───────────────────────────────┴──────────────────────────────────────────────────────────────────────────────┘
+
+  PlatformIO config platformio.ini không cần đổi gì — đó là toàn bộ phép thuật.
+
+  Cách 1 — VS Code + PlatformIO extension (khuyên dùng)
+
+  1. Cài extension PlatformIO IDE trong VS Code (1 lần)
+  2. Mở thư mục firmware/ trong VS Code:
+  File → Open Folder → E:\Khoa hoc\USTH\Sensor\Project\firmware
+  2. ⚠ Phải mở đúng thư mục firmware/, không phải Project/. PlatformIO tìm platformio.ini ở root của workspace.
+  3. Đợi PlatformIO tự tải toolchain + lib (lần đầu mất 2-5 phút, có progress bar góc dưới).
+  4. Bấm các nút ở thanh status bar dưới cùng (icon nhỏ):
+    - ✓ Build (compile, không upload)
+    - → Upload (build + flash)
+    - 🔌 Monitor (serial console)
+    - 🗑 Clean (xóa cache build)
+
+  Cách 2 — CLI (nhanh, không cần VS Code)
+
+  Cài CLI (1 lần): pip install platformio
+
+  Sau đó:
+
+  cd "E:\Khoa hoc\USTH\Sensor\Project\firmware"
+
+  # Build (compile + link, chua flash)
+  pio run
+
+  # Build + upload qua USB
+  pio run -t upload
+
+  # Mo serial monitor (115200 baud, da set trong platformio.ini)
+  pio device monitor
+
+  # Build + upload + monitor 1 phat
+  pio run -t upload -t monitor
+
+  # Clean cache (khi gap loi la)
+  pio run -t clean
+
+  Quy trình "first build" cho project này
+
+  # 1. Cam dau ESP32 vao laptop, doi Windows nhan driver (~10s)
+  #    Neu may chua co driver, tai CP210x hoac CH340 tu silabs/wch.com
+
+  # 2. Kiem tra cong COM
+  pio device list
+  # Output co dang: COM3 hoac /dev/ttyUSB0
+
+  # 3. Build truoc xem co loi syntax khong
+  cd "E:\Khoa hoc\USTH\Sensor\Project\firmware"
+  pio run
+
+  # 4. Neu OK -> upload
+  pio run -t upload
+
+  # 5. Mo monitor xem ESP32 boot len va in log gi
+  pio device monitor
+
+  Phía trong, PlatformIO làm gì?
+
+  Khi bạn gõ pio run:
+
+  [1/30] Compiling src/main.cpp        →  main.cpp.o
+  [2/30] Compiling src/imu.cpp         →  imu.cpp.o
+  [3/30] Compiling src/preprocess.cpp  →  preprocess.cpp.o
+  [4/30] Compiling src/pdr.cpp         →  pdr.cpp.o
+  ... (mỗi .cpp → 1 .o)
+  [28/30] Linking ...                  →  firmware.elf
+  [29/30] Building firmware image      →  firmware.bin
+  [30/30] Checking size                →  RAM: 12%, Flash: 28%
+
+  Phần Checking size rất hữu ích — báo bạn dùng bao nhiêu RAM/Flash. Nếu vượt thì sẽ fail link.
+
+  Lỗi hay gặp lần đầu
+
+  ┌────────────────────────────────────────┬───────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │                  Lỗi                   │                Nguyên nhân                │                                               Cách sửa                                                │
+  ├────────────────────────────────────────┼───────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ A fatal error occurred: Could not open │ Cổng đang bị Serial monitor / Arduino IDE │ Đóng monitor / Arduino IDE rồi upload lại                                                             │
+  │  COMx                                  │  chiếm                                    │                                                                                                       │
+  ├────────────────────────────────────────┼───────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Connecting... rồi failed to connect    │ ESP32 không vào bootloader mode           │ Giữ nút BOOT trên board, bấm EN rồi thả BOOT (đa số board tự làm bằng DTR/RTS, nhưng một số board cần │
+  │                                        │                                           │  làm thủ công)                                                                                        │
+  ├────────────────────────────────────────┼───────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ ImportError: No module named           │ CLI chưa cài                              │ pip install platformio                                                                                │
+  │ platformio                             │                                           │                                                                                                       │
+  ├────────────────────────────────────────┼───────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ 'MPU6050.h' not found                  │ Lib chưa tải                              │ pio pkg install hoặc xóa thư mục .pio/ rồi pio run lại                                                │
+  ├────────────────────────────────────────┼───────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ multiple definition of 'g_xxx'         │ Khai báo biến global trong header thay vì │ (project mình đã tránh, nhưng nếu sửa code thì để ý)                                                  │
+  │                                        │  cpp                                      │                                                                                                       │
+  ├────────────────────────────────────────┼───────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Upload OK nhưng monitor ra rác         │ Baud rate sai                             │ Check monitor_speed = 115200 trong platformio.ini                                                     │
+  ├────────────────────────────────────────┼───────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Boot loop, reset liên tục              │ Stack overflow trong FreeRTOS task        │ Tăng stack size trong xTaskCreatePinnedToCore(..., 8192, ...) lên 16384                               │
+  └────────────────────────────────────────┴───────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  Tại sao chia nhiều file thay vì 1 main.cpp?
+
+  Vì project này chạy 2 task FreeRTOS song song + nhiều module độc lập (IMU, PDR, MQTT, calibration, storage, inference). Nếu nhét tất cả vào main.cpp:
+
+  - File sẽ ~2000 dòng → khó navigate
+  - Khi sửa PDR mà recompile thì compile lại cả file 2000 dòng — chậm hơn
+  - Khó test/thay từng module riêng (sau này muốn đổi MPU6050 → MPU9250 chỉ cần đổi imu.cpp)
+
+  Còn về cách build thì y hệt — bạn chỉ thấy khác khi mở source code, không khác khi bấm Upload.
+
+  Tóm tắt một câu
+
+  Cứ làm y như project cũ của bạn:
+  cd firmware
+  pio run -t upload
+  pio device monitor
+  Không có gì đặc biệt phải học mới cho project nhiều file.

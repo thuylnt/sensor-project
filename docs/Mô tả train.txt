@@ -1,0 +1,101 @@
+Có rồi. Lúc đầu khi build scaffold, tôi đã viết sẵn tools/train_har.py — nó làm toàn bộ pipeline từ CSV → model file .h để copy vào firmware. Bạn không cần viết thêm.
+
+  Pipeline train hoạt động thế nào
+
+  File train_har.py đã có sẵn các bước:
+
+  data/*.csv  ──┐
+                ├──► load tất cả → DataFrame
+                │
+                ├──► tạo windows 200 mẫu, overlap 50% (hop=100)
+                │     → mỗi window thành 1 tensor (200, 6)
+                │     → z-score per-window per-axis
+                │
+                ├──► split train/val THEO file (không random)
+                │     → tránh leak: cùng 1 phiên không ở cả 2 set
+                │
+                ├──► build 1D-CNN (Conv1D × 3 → GAP → Dense × 2)
+                │     → train ~40 epochs, batch 64
+                │     → có class_weight để cân bằng class lệch
+                │
+                ├──► eval: F1 per-class + confusion matrix
+                │
+                ├──► quantize float32 → int8 (representative_dataset)
+                │     → ra file .tflite ~15-25 KB
+                │
+                └──► export sang C array
+                      → ra file model_data.h để copy vào firmware
+
+  Cách chạy
+
+  Sau khi có vài file CSV trong tools/data/:
+
+  cd "E:\Khoa hoc\USTH\Sensor\Project\tools"
+  pip install -r requirements.txt   # 1 lần - install tensorflow, sklearn, pandas
+  python train_har.py --data "data/*.csv" --out model/ --epochs 40
+
+  Mất ~5-15 phút trên CPU laptop (tensorflow CPU). Output vào thư mục model/:
+  - model.keras — model float32 gốc (dùng để retrain hoặc inspect)
+  - model_quant.tflite — model int8 đã quantize (dùng để deploy)
+  - model_data.h — C header chứa byte array của tflite, đây là file để copy vào firmware
+
+  Sau khi train xong, deploy lại ESP32
+
+  3 thao tác bằng tay:
+
+  1. Copy file tools/model/model_data.h → firmware/src/model_data.h (đè file placeholder)
+  2. Sửa 1 dòng trong firmware/src/inference.cpp:
+  #define USE_TFLITE 1     // doi tu 0
+  3. Uncomment lib trong firmware/platformio.ini:
+  lib_deps =
+      ...
+      tensorflow/TensorFlowLite_ESP32@^0.9.0    ; bo // o dau dong
+  4. Đổi level trong config.h:
+  #define MILESTONE_LEVEL 4
+  5. Flash lại: pio run -t upload
+
+  Tuy nhiên — tôi nói "đã có code" nhưng có 1 chỗ trong inference.cpp mới chỉ là TODO: phần #if USE_TFLITE còn rỗng, cần viết:
+  - Khai báo tflite::MicroErrorReporter, Interpreter, tensor_arena[...]
+  - Load model từ g_model_data, AllocateTensors()
+  - Trong classify(): copy window vào input tensor, gọi Invoke(), đọc output, dequantize
+
+  Khoảng 50 dòng C++ template chuẩn. Tôi để TODO vì khi đó chưa có model thật để test. Đây là phần duy nhất chưa hoàn thiện trong toàn bộ pipeline.
+
+  Tóm tắt trạng thái code training
+
+  ┌─────────────────────────────────────────────┬───────────────────────┐
+  │                    Phần                     │        Có sẵn?        │
+  ├─────────────────────────────────────────────┼───────────────────────┤
+  │ Đọc CSV + cửa sổ hóa + z-score              │ ✅                    │
+  ├─────────────────────────────────────────────┼───────────────────────┤
+  │ Build CNN (Keras)                           │ ✅                    │
+  ├─────────────────────────────────────────────┼───────────────────────┤
+  │ Train + class_weight + split theo file      │ ✅                    │
+  ├─────────────────────────────────────────────┼───────────────────────┤
+  │ Evaluate F1 + confusion matrix              │ ✅                    │
+  ├─────────────────────────────────────────────┼───────────────────────┤
+  │ Quantize int8 với representative dataset    │ ✅                    │
+  ├─────────────────────────────────────────────┼───────────────────────┤
+  │ Export model_data.h                         │ ✅                    │
+  ├─────────────────────────────────────────────┼───────────────────────┤
+  │ inference.cpp load và chạy model trên ESP32 │ ⚠ TODO khoảng 50 dòng │
+  └─────────────────────────────────────────────┴───────────────────────┘
+
+  Lưu ý thực tế khi train lần đầu
+
+  1. Cài TensorFlow trên Windows hơi phiền. Nếu vướng, dùng Google Colab: upload CSV lên, chạy notebook, download model_data.h. Free GPU và không phải fight với pip.
+  2. Đừng kỳ vọng accuracy cao ngay lần đầu. Lần đầu thường gặp:
+    - Class imbalance (đứng yên dễ thu nhiều hơn chạy) → F1 lệch
+    - Drift cảm biến giữa các phiên → val accuracy thấp hơn train
+    - Vị trí gắn sensor khác giữa các phiên → model overfit vị trí
+
+  Cách fix: thu thêm data đa dạng (nhiều người, nhiều ngày, nhiều vị trí gắn).
+  3. Tensor arena size. Khi USE_TFLITE=1, cần khai báo buffer tensor_arena[30000] hoặc lớn hơn. Nếu không đủ, AllocateTensors() sẽ fail. Phần này nằm trong 50 dòng TODO.
+
+  Câu trả lời ngắn
+
+  - Train code đã có, chạy python train_har.py --data "data/*.csv"
+  - Output: file model_data.h để copy vào firmware/src/
+  - Còn thiếu: phần inference.cpp (USE_TFLITE=1 branch) — ~50 dòng C++ chuẩn TFLM, sẽ viết khi bạn có model thật để test cùng
+
+  Lúc bạn đến milestone 4 (sau khi train xong), nói tôi viết nốt phần TFLM inference. Lúc đó test được real-time luôn.

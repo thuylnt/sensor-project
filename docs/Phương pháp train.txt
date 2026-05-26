@@ -1,0 +1,308 @@
+ Mô hình KHÔNG chuyển thành code C++
+
+  Model sau training (Keras) là 1 đống số float — weights, biases, kiến trúc. Cách "đưa lên ESP32" có 2 trường phái:
+
+  Trường phái A — Interpreter (cách chúng ta dùng)
+
+  Keras model
+     │
+     │  TFLiteConverter (lib Python)
+     ▼
+  file .tflite (binary flatbuffer, ~15-25 KB)
+     │
+     │  xxd -i  HOẶC  write_c_array() trong train_har.py
+     ▼
+  model_data.h  ← chỉ chứa MẢNG BYTE, không có code logic
+     │
+     │  #include vào firmware
+     ▼
+  TFLite Micro runtime (lib C++ trên ESP32)
+     │
+     │  đọc các byte này lúc runtime, "diễn dịch" để chạy
+     ▼
+  Inference output
+
+  Key point: model_data.h chỉ là dạng:
+  const unsigned char g_model_data[] = {
+      0x1c, 0x00, 0x00, 0x00, 0x54, 0x46, 0x4c, 0x33,   // header flatbuffer
+      0x14, 0x00, 0x20, 0x00, ...                        // ... weights, ops ...
+  };
+  Không phải code C++ có thể đọc hiểu. Chỉ là byte dump.
+
+  Để chạy được những byte này, cần TFLite Micro — đây là library (mà bạn đang nghĩ đến):
+  - Trong platformio.ini: tensorflow/TensorFlowLite_ESP32@^0.9.0
+  - ~80 KB code C++ binary trong firmware
+  - Lúc runtime: parse byte array, dựng interpreter, chạy operators (Conv1D, Dense...)
+
+  Trường phái B — Code generation (cái bạn có thể đã nghe)
+
+  Keras model
+     │
+     │  Edge Impulse EON Compiler / emlearn / m2cgen
+     ▼
+  model.cpp / model.h  ← chứa C++ THẬT
+     │
+     │  ví dụ:
+     │  float layer1[16];
+     │  for (int i=0; i<16; i++) layer1[i] = relu(weights[i] * input + bias[i]);
+     │
+     ▼
+  Compile thẳng, không cần lib runtime
+
+  Khác với A: file .h ở đây là code thực thi, không phải data.
+
+  ┌─────────────────┬──────────────────────────────────────────┬─────────────────────────────────────┐
+  │                 │       Trường phái A (Interpreter)        │      Trường phái B (Code-gen)       │
+  ├─────────────────┼──────────────────────────────────────────┼─────────────────────────────────────┤
+  │ Format model    │ Byte array (.tflite)                     │ Code C++                            │
+  ├─────────────────┼──────────────────────────────────────────┼─────────────────────────────────────┤
+  │ Cần lib runtime │ Có (TFLM ~80 KB)                         │ Không                               │
+  ├─────────────────┼──────────────────────────────────────────┼─────────────────────────────────────┤
+  │ Tổng flash      │ Model + lib ~100 KB                      │ Model code ~20 KB                   │
+  ├─────────────────┼──────────────────────────────────────────┼─────────────────────────────────────┤
+  │ Đổi model       │ Chỉ thay byte array, không recompile lib │ Phải regen + recompile toàn bộ      │
+  ├─────────────────┼──────────────────────────────────────────┼─────────────────────────────────────┤
+  │ Hỗ trợ ops      │ Đầy đủ TF ops                            │ Phụ thuộc tool                      │
+  ├─────────────────┼──────────────────────────────────────────┼─────────────────────────────────────┤
+  │ Tool điển hình  │ TensorFlow Lite Micro                    │ Edge Impulse EON, emlearn, microTVM │
+  └─────────────────┴──────────────────────────────────────────┴─────────────────────────────────────┘
+
+  Tại sao mình chọn trường phái A?
+
+  1. Standard: TFLite Micro là chuẩn de-facto, tài liệu nhiều, hỗ trợ ops phong phú.
+  2. Linh hoạt: train xong, retrain, deploy lại — chỉ replace model_data.h, không phải config lại pipeline.
+  3. Phù hợp đồ án sinh viên: dễ tìm tutorial, ít tự debug ops.
+
+  Trường phái B (Edge Impulse EON Compiler) cũng rất tốt — nhanh hơn ~20%, nhỏ hơn. Edge Impulse Studio cho phép bạn chọn 1 trong 2 lúc export. Mình mặc định gợi ý A vì ổn định hơn.
+
+  Cụ thể trong code của chúng ta
+
+  Phía Python (đã có sẵn trong train_har.py)
+
+  conv = tf.lite.TFLiteConverter.from_keras_model(model)
+  conv.optimizations = [tf.lite.Optimize.DEFAULT]
+  conv.representative_dataset = rep_data        # cần để quantize int8
+  conv.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+  conv.inference_input_type = tf.int8
+  conv.inference_output_type = tf.int8
+  tflite = conv.convert()                       # → byte array
+  write_c_array(tflite, "model_data.h")         # → file .h chứa array đó
+  Đây là "thư viện đưa model về C++" mà bạn đang nghĩ tới: tf.lite.TFLiteConverter. Nó ở phía Python, không phải C++.
+
+  Phía firmware (cái còn TODO, ~50 dòng)
+
+  #include <TensorFlowLite_ESP32.h>          // ← THƯ VIỆN runtime
+  #include "model_data.h"                     // ← BYTE ARRAY
+
+  static tflite::MicroInterpreter* interp;
+  static uint8_t tensor_arena[30 * 1024];     // RAM cho intermediate tensors
+
+  bool begin() {
+      auto* model = tflite::GetModel(g_model_data);   // parse byte → model object
+      static tflite::AllOpsResolver resolver;          // dang ky ops (Conv1D, Dense...)
+      static tflite::MicroInterpreter static_interp(
+          model, resolver, tensor_arena, sizeof(tensor_arena));
+      interp = &static_interp;
+      interp->AllocateTensors();
+      return true;
+  }
+
+  bool classify(const float* window, Result& out) {
+      // 1. Copy + quantize float input vào int8 input tensor
+      int8_t* in = interp->input(0)->data.int8;
+      float scale = interp->input(0)->params.scale;
+      int zp = interp->input(0)->params.zero_point;
+      for (int i = 0; i < WINDOW_SIZE * NUM_AXES; ++i)
+          in[i] = (int8_t)(window[i] / scale + zp);
+
+      // 2. Inference
+      interp->Invoke();
+
+      // 3. Dequantize output int8 → float probabilities
+      int8_t* o = interp->output(0)->data.int8;
+      float oscale = interp->output(0)->params.scale;
+      int ozp = interp->output(0)->params.zero_point;
+      float max_p = -1; uint8_t arg = 0;
+      for (int i = 0; i < ACT_NUM_CLASSES; ++i) {
+          out.probs[i] = (o[i] - ozp) * oscale;
+          if (out.probs[i] > max_p) { max_p = out.probs[i]; arg = i; }
+      }
+      out.cls = arg;
+      out.confidence = max_p;
+      return true;
+  }
+
+  Đây là phần "sử dụng" model. Library TFLite Micro làm hết phần khó (parse flatbuffer, dispatch ops, allocate intermediate buffers). Code mình viết chỉ là glue code giữa firmware và
+  library.
+
+  Tóm tắt khái niệm
+
+  ┌────────────────────────────────┬─────────────────────────────────────────────┐
+  │        Cái bạn cần biết        │        Tên cụ thể trong project này         │
+  ├────────────────────────────────┼─────────────────────────────────────────────┤
+  │ Tool chuyển Keras → byte array │ tf.lite.TFLiteConverter (Python, đã dùng)   │
+  ├────────────────────────────────┼─────────────────────────────────────────────┤
+  │ Format byte array              │ .tflite (Google FlatBuffer)                 │
+  ├────────────────────────────────┼─────────────────────────────────────────────┤
+  │ Cách nhét byte vào firmware    │ C array trong file .h (giống xxd -i)        │
+  ├────────────────────────────────┼─────────────────────────────────────────────┤
+  │ Thư viện chạy model trên ESP32 │ TensorFlow Lite for Microcontrollers (TFLM) │
+  ├────────────────────────────────┼─────────────────────────────────────────────┤
+  │ Tên package PlatformIO         │ tensorflow/TensorFlowLite_ESP32             │
+  ├────────────────────────────────┼─────────────────────────────────────────────┤
+  │ Code glue trong project        │ firmware/src/inference.cpp (phần TODO)      │
+  └────────────────────────────────┴─────────────────────────────────────────────┘
+
+  Vậy "thư viện đưa model về C++" mà bạn nhớ — có thể là TFLite Micro (cách chính thống, mình dùng) hoặc Edge Impulse EON Compiler (cách code-gen, không cần runtime). Cả hai đều là lựa
+  chọn hợp lệ.
+  
+================================================================================
+
+
+❯ với 2 cách này, về mặt performance và tốn chỗ trong memory thì cái nào hơn cái nào? Tôi đang  hiểu cần tối ưu memory, vì thiết bị ESP32 rất giới hạn, và tối ưu performance, vì khi       
+  inference, cần qua model, rồi gửi tín hiệu xử lý về để hiển thị ngay trên màn hình?                                                                                                       
+  
+● Hỏi rất đúng câu — đây là quyết định kỹ thuật quan trọng. Để tôi cho số cụ thể cho ESP32 thường (520 KB SRAM, không PSRAM) với 1D-CNN ~10K params của project mình.
+
+  Bảng so sánh chi tiết
+
+  Memory footprint
+
+  ┌──────────────────────────┬─────────────────────────────────────────────────────────────────────────────────┬──────────────────────────────────────────┬─────────────────────────┐
+  │       Loại memory        │                                  TFLite Micro                                   │               EON Compiler               │       Chênh lệch        │
+  ├──────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────┼─────────────────────────┤
+  │ Flash — model bytes/code │ ~15-25 KB (binary .tflite)                                                      │ ~25-40 KB (C++ unrolled)                 │ EON to hơn ở phần model │
+  ├──────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────┼─────────────────────────┤
+  │ Flash — runtime library  │ ~80-120 KB (AllOpsResolver) hoặc ~40-60 KB (MicroMutableOpResolver chỉ ops cần) │ ~5-15 KB (baked-in)                      │ EON tiết kiệm 50-100 KB │
+  ├──────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────┼─────────────────────────┤
+  │ RAM — tensor arena       │ ~30 KB (cần khai báo dư)                                                        │ ~20 KB (biết trước shape ở compile-time) │ EON tiết kiệm ~10 KB    │
+  ├──────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────┼─────────────────────────┤
+  │ RAM — interpreter state  │ ~5 KB                                                                           │ ~1 KB                                    │ EON tiết kiệm ~4 KB     │
+  ├──────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────┼─────────────────────────┤
+  │ Tổng flash               │ ~100-145 KB                                                                     │ ~30-55 KB                                │ EON tiết kiệm ~70 KB    │
+  ├──────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┼──────────────────────────────────────────┼─────────────────────────┤
+  │ Tổng RAM                 │ ~35 KB                                                                          │ ~21 KB                                   │ EON tiết kiệm ~14 KB    │
+  └──────────────────────────┴─────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────┴─────────────────────────┘
+
+  Performance (latency 1 inference, window 200×6, classes 4)
+
+  ┌────────────────────────────┬─────────────────────────┬─────────────────────┐
+  │          Phép đo           │      TFLite Micro       │    EON Compiler     │
+  ├────────────────────────────┼─────────────────────────┼─────────────────────┤
+  │ Inference time @ 240 MHz   │ 30-50 ms                │ 20-35 ms            │
+  ├────────────────────────────┼─────────────────────────┼─────────────────────┤
+  │ Overhead so với raw kernel │ +10-15% (dispatch loop) │ ~0% (inline)        │
+  ├────────────────────────────┼─────────────────────────┼─────────────────────┤
+  │ Determinism                │ Cao (no malloc runtime) │ Cao hơn (no parser) │
+  └────────────────────────────┴─────────────────────────┴─────────────────────┘
+
+  Compile / Build
+
+  ┌─────────────────┬─────────────────────────────────┬──────────────────────────────────────────────────┐
+  │                 │          TFLite Micro           │                   EON Compiler                   │
+  ├─────────────────┼─────────────────────────────────┼──────────────────────────────────────────────────┤
+  │ Phụ thuộc cloud │ Không                           │ Cần Edge Impulse account (free tier có giới hạn) │
+  ├─────────────────┼─────────────────────────────────┼──────────────────────────────────────────────────┤
+  │ Đổi model       │ Replace model_data.h (chỉ data) │ Phải re-export toàn bộ thư mục code              │
+  ├─────────────────┼─────────────────────────────────┼──────────────────────────────────────────────────┤
+  │ Debug           │ Khó (interpreter là blackbox)   │ Dễ (code là code, đọc được)                      │
+  └─────────────────┴─────────────────────────────────┴──────────────────────────────────────────────────┘
+
+  Đặt vào bối cảnh project bạn
+
+  ESP32 thường có:
+  - 520 KB SRAM tổng, trừ ~150 KB Arduino + WiFi stack đang ngốn → còn ~370 KB cho app
+  - 4 MB flash, trừ ~1.5 MB partition app + ~1.5 MB LittleFS → còn ~1 MB cho code/data
+
+  Project mình hiện đang dùng (firmware + lib mặc định):
+  - Flash: ~28% của 1.5 MB ≈ 420 KB (theo log pio run)
+  - RAM: ~12% của 320 KB heap ≈ 38 KB idle
+
+  Thêm TFLM: +120 KB flash + 35 KB RAM → tổng ~540 KB flash, ~73 KB RAM. Vẫn dư rất nhiều.
+
+  Thêm EON: +55 KB flash + 21 KB RAM → tiết kiệm 65 KB flash, 14 KB RAM.
+
+  Trả lời 2 câu hỏi của bạn
+
+  "Tốn chỗ memory — cái nào hơn?"
+
+  EON tiết kiệm hơn, nhưng cho model nhỏ của bạn (1D-CNN ~10K params), cả 2 đều dư chỗ trên ESP32. Bottleneck memory thực sự với project hiện tại là:
+  - Window buffer 200×6×4 byte = 4.8 KB (bạn đã dùng)
+  - LittleFS log offline (1.5 MB flash dành riêng)
+  - WiFi/MQTT buffer (~30 KB)
+
+  Tổng cộng còn ~250 KB RAM trống — đủ cho cả model TFLM (35 KB).
+
+  "Performance — cái nào hơn?"
+
+  EON nhanh hơn ~30% (20 ms vs 50 ms). Nhưng cho use case của bạn:
+
+  Pipeline tổng từ "lắc tay" → "thấy trên dashboard":
+
+  [sensor lấy mẫu]    10 ms (1 sample @ 100Hz, nhưng cần đợi đủ window 2s thực ra)
+  [preprocess + window] <1 ms
+  [inference TFLM]    50 ms      ← bottleneck duy nhất ở firmware
+  [MQTT publish]       2 ms (qua LAN)
+  [Telegraf consume]  20 ms
+  [InfluxDB write]    30 ms
+  [Grafana query +1s refresh]   500-1000 ms   ← bottleneck thực sự
+  [Node-RED canvas]    20 ms (push từ MQTT trực tiếp)
+
+  → Latency tới Node-RED: ~80 ms
+  → Latency tới Grafana: ~1100 ms
+
+  Inference 50 ms vs 20 ms ở phía ESP32 — thực ra user không cảm nhận được. Vì:
+  - Window hop là 1 giây (1 inference/s), không phải càng nhanh càng tốt
+  - Grafana refresh 1 Hz là bottleneck thực sự cho user perception
+  - Node-RED canvas push qua MQTT thì cả 2 đều realtime-feel
+
+  → Performance gain của EON không nhìn thấy được trong project demo.
+
+  Khi nào EON thực sự matter?
+
+  EON tỏa sáng khi bạn:
+  - Cần inference >10 Hz (e.g., gesture nhỏ <100ms cần phản ứng tức thì)
+  - Model >50 KB params (RAM TFLM tăng nhanh)
+  - Build cho chip nhỏ hơn ESP32 (e.g., Cortex-M0 + 32 KB SRAM)
+  - Có nhiều model chạy song song (mỗi model thêm overhead arena trong TFLM)
+
+  Cho 1 model nhỏ trên ESP32 @ 1 Hz như project bạn → TFLM đủ tốt.
+
+  Khuyến nghị thực tế
+
+  ┌─────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────┐
+  │                   Tình huống của bạn                    │                           Chọn                            │
+  ├─────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────┤
+  │ Học bài bản TinyML, muốn hiểu mọi tầng                  │ TFLite Micro — tài liệu nhiều, debug được, chuẩn industry │
+  ├─────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────┤
+  │ Đã dùng Edge Impulse Studio thu data + train trên cloud │ EON Compiler — export 1 click ngay trong workflow EI      │
+  ├─────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────┤
+  │ Cần tối ưu cuối cùng, đẩy ESP32 đến giới hạn            │ EON, hoặc viết tay code-gen riêng                         │
+  └─────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────┘
+
+  Cho đồ án USTH này: dùng TFLite Micro. Vì:
+  1. Đủ chỗ + đủ tốc độ, không là bottleneck
+  2. Báo cáo trình bày được "tôi dùng TFLM, framework chuẩn của Google" — credibility tốt
+  3. Mở rộng sau này dễ hơn (đổi model, retrain, không cần đăng ký EI account)
+  4. Code TODO 50 dòng tôi đã viết là cho TFLM, sẵn sàng dùng
+
+  Nếu sau này muốn so sánh, bạn có thể export cùng model qua EON Compiler trong Edge Impulse Studio và bench 2 version → đoạn này có thể thành 1 mục hay trong báo cáo: "Trade-off
+  interpreter vs compiled approach trên ESP32".
+
+  Một mẹo tối ưu TFLM (nếu cần)
+
+  Nếu sau này thấy TFLM ngốn flash quá, đổi từ AllOpsResolver sang MicroMutableOpResolver chỉ đăng ký ops thật sự dùng:
+
+  // Thay vi:
+  // static tflite::AllOpsResolver resolver;  // ~120 KB
+
+  // Dung:
+  static tflite::MicroMutableOpResolver<5> resolver;
+  resolver.AddConv2D();
+  resolver.AddMaxPool2D();
+  resolver.AddFullyConnected();
+  resolver.AddReshape();
+  resolver.AddSoftmax();
+  // → giam ~60-80 KB flash
+
+  Cho 1D-CNN của mình chỉ cần ~5 ops → flash giảm xuống tương đương EON. Đây là cách "TFLM gọn" thường được dùng trong production.

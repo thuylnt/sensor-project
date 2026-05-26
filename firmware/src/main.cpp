@@ -7,6 +7,8 @@
 #include "mqtt_client.h"
 #include "calibration.h"
 #include "storage.h"
+#include "display.h"
+#include "i2c_bus.h"
 
 // ===========================================================================
 // USTH Sensor Project - ESP32 HAR + PDR-lite
@@ -87,6 +89,7 @@ namespace {
             // PDR moi sample
             float lin_norm = preprocess::accelNormLinear(s);
             const pdr::State& st = pdr::update(s, lin_norm);
+            g_last_state = st;   // copy snapshot cho display task / status topic
             if (st.step_event) {
                 PubMsg m{}; m.kind = PUB_STEP; m.pdr_s = st;
                 enqueuePub(m);
@@ -95,6 +98,16 @@ namespace {
             // Inference moi HOP samples khi du window
             if (g_filled >= WINDOW_SIZE && g_hop_counter >= WINDOW_HOP) {
                 g_hop_counter = 0;
+
+#if MILESTONE_LEVEL <= 2
+                // Milestone 2: bypass inference, gia "walk" voi confidence 0.9.
+                // PDR van chay (step counter) - de quan sat tren dashboard.
+                inference::Result r = { ACT_WALK, 0.9f, {0.05f, 0.85f, 0.05f, 0.05f} };
+                pdr::setActivity(ACT_WALK);
+                PubMsg m{}; m.kind = PUB_ACTIVITY; m.act = r; enqueuePub(m);
+                PubMsg p{}; p.kind = PUB_POSE;     p.pdr_s = st; enqueuePub(p);
+                g_last_result = r;
+#else
                 static float work[WINDOW_SIZE * NUM_AXES];
                 // Sao chep window dang sliding ra dang contig (read_idx tinh tu g_write_idx)
                 for (int i = 0; i < WINDOW_SIZE; ++i) {
@@ -114,6 +127,7 @@ namespace {
                     PubMsg p{}; p.kind = PUB_POSE; p.pdr_s = st;
                     enqueuePub(p);
                 }
+#endif
             }
 
             // Raw stream
@@ -124,6 +138,15 @@ namespace {
                 m.raw.gx = s.gx; m.raw.gy = s.gy; m.raw.gz = s.gz;
                 enqueuePub(m);
             }
+        }
+    }
+
+    // Task display OLED (core 0, priority thap)
+    void displayTask(void*) {
+        for (;;) {
+            const char* name = ACTIVITY_NAMES[g_last_result.cls];
+            display::update(name, g_last_result.confidence, g_last_state);
+            vTaskDelay(pdMS_TO_TICKS(OLED_REFRESH_MS));
         }
     }
 
@@ -153,6 +176,8 @@ void setup() {
     delay(300);
     Serial.println("\n=== USTH PDR firmware ===");
 
+    i2c_bus::begin();   // mutex truoc khi co bat cu task nao cham vao Wire
+
     if (!imu::begin()) {
         Serial.println("[FATAL] IMU init failed - check wiring (SDA=21 SCL=22)");
     }
@@ -172,8 +197,20 @@ void setup() {
 
     g_pub_queue = xQueueCreate(64, sizeof(PubMsg));
 
+#if MILESTONE_LEVEL <= 2
+    Serial.println("[BRINGUP] MILESTONE_LEVEL <= 2 -> bypass inference, enable raw stream");
+    mqttc::enableRawStream(true);
+#endif
+
+    // OLED khoi tao sau MPU vi dung cung Wire (MPU goi Wire.begin truoc)
+    display::begin();
+
     xTaskCreatePinnedToCore(sensorTask, "sensor", 8192, nullptr, 5, nullptr, 1);
     xTaskCreatePinnedToCore(mqttTask,   "mqtt",   8192, nullptr, 3, nullptr, 0);
+
+    if (display::isReady()) {
+        xTaskCreatePinnedToCore(displayTask, "display", 4096, nullptr, 2, nullptr, 0);
+    }
 }
 
 void loop() {

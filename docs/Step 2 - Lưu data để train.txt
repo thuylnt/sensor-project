@@ -1,0 +1,331 @@
+Dùng MILESTONE_LEVEL = 2 — đó chính là mục đích thiết kế của nó.
+
+  Tại sao Level 2 phù hợp cho thu data
+
+  ┌────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────┐
+  │                        Yêu cầu thu data                        │                      Level 2 đáp ứng                       │
+  ├────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ Cần raw IMU 100 Hz publish ra MQTT để collect_label.py capture │ ✅ Tự bật raw stream ngay khi boot                         │
+  ├────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ Không cần inference (vì đang đi thu để train)                  │ ✅ Bypass hẳn inference::classify()                        │
+  ├────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ Không tốn CPU cho ML, giảm rủi ro drop sample                  │ ✅ Sensor task chỉ chạy đọc + filter + push                │
+  ├────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ Calibration vẫn áp dụng (offset/scale đúng)                    │ ✅ Calibration load ở setup(), độc lập với milestone level │
+  └────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────┘
+
+  Quy trình thu data từ A-Z
+
+  # 1. Calibrate MPU6050 (LÀM 1 LẦN, BẮT BUỘC trước khi thu data)
+  #    Vì nếu chưa calib thì gx,gy,gz có bias → model sẽ học cả bias đó
+  cd "E:\Khoa hoc\USTH\Sensor\Project\firmware"
+  # Edit config.h: MILESTONE_LEVEL = 2
+  pio run -t upload
+
+  cd ..\tools
+  python calibrate_mpu.py --broker 127.0.0.1 --device dev01 --out calib.json
+  # (làm theo hướng dẫn lật 6 mặt)
+  # TODO hiện tại: copy thủ công các giá trị từ calib.json vào main.cpp
+  # hoặc gửi qua serial — chưa có tool tự động
+
+  # 2. Thu data (giữ MILESTONE_LEVEL = 2)
+  python collect_label.py --broker 127.0.0.1 --device dev01 --out data\sess1.csv
+  # Đeo ESP32, bấm 1=stand 2=walk 3=run 4=stairs SPACE=pause q=quit
+  # Mục tiêu: 5-10 phút mỗi class, lặp 2-3 phiên khác ngày
+
+  # 3. Train (offline, trên laptop)
+  python train_har.py --data "data\*.csv" --out model\
+
+  # 4. Deploy model
+  copy model\model_data.h ..\firmware\src\model_data.h
+  # Edit config.h: MILESTONE_LEVEL = 4
+  # Edit inference.cpp: #define USE_TFLITE 1
+  # Edit platformio.ini: uncomment lib TensorFlowLite_ESP32
+  cd ..\firmware
+  pio run -t upload
+
+  Lưu ý quan trọng khi thu data ở Level 2
+
+  Bỏ qua các topic này trên dashboard — chúng là "rác" trong giai đoạn thu data:
+
+  - usth/pdr/dev01/activity luôn = walk (giả) → bỏ qua
+  - usth/pdr/dev01/pose quỹ đạo dựa trên fake activity → bỏ qua
+  - usth/pdr/dev01/step step detector có chạy nhưng bạn đang thu data nhiều class khác nhau, đếm step không có nghĩa → bỏ qua
+
+  Cái duy nhất quan trọng: usth/pdr/dev01/raw — chính là cái collect_label.py đang subscribe và ghi vào CSV cùng với nhãn bạn bấm phím.
+
+  Có một cách khác — dùng Level 3 + bật raw tạm thời
+
+  Nếu bạn không muốn flash lại firmware mỗi lần đổi mục đích:
+
+  # Đang ở Level 3, bật raw tạm thời
+  mosquitto_pub -h <broker> -t usth/pdr/cmd/raw_on -m ""
+  python collect_label.py --out data/sess1.csv
+  # Sau khi xong, tắt raw để đỡ tốn băng thông
+  mosquitto_pub -h <broker> -t usth/pdr/cmd/raw_off -m ""
+
+  Trade-off:
+  - ✅ Không flash lại firmware
+  - ✅ Không flash lại firmware
+  - ❌ Heuristic inference vẫn chạy nền, tốn ít CPU (không lớn, ~50ms/giây — không sao)
+  - ❌ Activity = heuristic guess (stand/walk/run/stairs theo RMS) — gây nhiễu trên dashboard nhưng không ảnh hưởng CSV vì collect_label.py chỉ đọc raw
+
+  # Đang ở Level 3, bật raw tạm thời
+  mosquitto_pub -h <broker> -t usth/pdr/cmd/raw_on -m ""
+  python collect_label.py --out data/sess1.csv
+  # Sau khi xong, tắt raw để đỡ tốn băng thông
+  mosquitto_pub -h <broker> -t usth/pdr/cmd/raw_off -m ""
+
+  Trade-off:
+  - ✅ Không flash lại firmware
+  - ❌ Heuristic inference vẫn chạy nền, tốn ít CPU (không lớn, ~50ms/giây — không sao)
+  - ❌ Activity = heuristic guess (stand/walk/run/stairs theo RMS) — gây nhiễu trên dashboard nhưng không ảnh hưởng CSV vì collect_label.py chỉ đọc raw
+
+  Khuyến nghị cuối cùng
+
+  ┌─────────────────────────────────────────────┬────────────────┬────────────────────────────────────────────────────────────┐
+  │                 Tình huống                  │     Level      │                           Vì sao                           │
+  ├─────────────────────────────────────────────┼────────────────┼────────────────────────────────────────────────────────────┤
+  │ Đang setup, debug hardware                  │ 2              │ Sạch sẽ, raw on sẵn, không phân tâm                        │
+  ├─────────────────────────────────────────────┼────────────────┼────────────────────────────────────────────────────────────┤
+  │ Thu data chính thức cho training            │ 2              │ Cùng lý do trên + cam kết không có inference làm nặng task │
+  ├─────────────────────────────────────────────┼────────────────┼────────────────────────────────────────────────────────────┤
+  │ Sau khi đã có model, demo                   │ 4              │ Production mode                                            │
+  ├─────────────────────────────────────────────┼────────────────┼────────────────────────────────────────────────────────────┤
+  │ Lỡ flash Level 3 rồi mà muốn thu data nhanh │ 3 + cmd raw_on │ Khỏi flash lại                                             │
+  └─────────────────────────────────────────────┴────────────────┴────────────────────────────────────────────────────────────┘
+
+  Mặc định cho giai đoạn data collection của bạn: Level 2 + đã calibrate xong + raw stream tự bật.
+=====================================================================================
+ 1. data/sess1.csv ở đâu?
+
+  Đường dẫn này là relative tới chỗ bạn chạy lệnh. Nếu bạn ở tools/:
+
+  cd "E:\Khoa hoc\USTH\Sensor\Project\tools"
+  python collect_label.py --out data/sess1.csv
+  → file sẽ ở E:\Khoa hoc\USTH\Sensor\Project\tools\data\sess1.csv
+
+  Script tự tạo thư mục data/ nếu chưa có (out_path.parent.mkdir(parents=True, exist_ok=True) trong collect_label.py). Bạn có thể đổi tên: --out my_data/walk_session_05_26.csv, --out
+  C:/data/foo.csv, v.v.
+
+  Format CSV — 9 cột:
+  ts_ms,device,ax,ay,az,gx,gy,gz,label
+  1735300000123,dev01,0.123,9.812,0.045,0.001,-0.002,0.003,stand
+  1735300000133,dev01,0.198,9.804,0.038,0.001,-0.001,0.002,stand
+  ...
+
+  Bạn có thể thu nhiều file phiên (sess1.csv, sess2.csv...) rồi train_har.py --data "data/*.csv" để gộp.
+
+  2. calib.json ở đâu?
+
+  Tương tự — relative tới chỗ chạy lệnh. Mặc định ra thư mục hiện tại:
+
+  cd "E:\Khoa hoc\USTH\Sensor\Project\tools"
+  python calibrate_mpu.py --out calib.json
+  → file ở E:\Khoa hoc\USTH\Sensor\Project\tools\calib.json
+
+  Format (đã được tôi viết trong calibrate_mpu.py):
+  {
+    "acc_bias":  [0.12,  -0.08, 0.21],
+    "acc_scale": [1.003, 0.998, 1.011],
+    "gyro_bias": [-0.0021, 0.0034, -0.0015],
+    "n_samples_per_face": 300
+  }
+
+  .gitignore đã loại file này khỏi git rồi (mỗi máy/cảm biến có calib khác nhau, không nên commit).
+
+  3. "Hướng dẫn lật 6 mặt" ở đâu?
+
+  Nằm chính trong calibrate_mpu.py — khi bạn chạy, script in prompt từng bước. Cụ thể đây là những gì bạn sẽ thấy trên màn hình:
+
+  [MQTT] subscribed raw stream
+  Dam bao da bat raw stream:  mosquitto_pub -h 127.0.0.1 -t usth/pdr/cmd/raw_on -m on
+  Nhan Enter de bat dau...
+                                                                ← bấm Enter
+
+  >> Dat ESP32 voi '+X up', giu yen, roi nhan Enter...          ← lật, giữ yên, Enter
+    thu duoc 300/300
+    OK (300 mau)
+
+  >> Dat ESP32 voi '-X up', giu yen, roi nhan Enter...
+    ...
+
+  >> Dat ESP32 voi '+Y up', giu yen, roi nhan Enter...
+    ...
+
+  >> Dat ESP32 voi '-Y up', giu yen, roi nhan Enter...
+    ...
+
+  >> Dat ESP32 voi '+Z up', giu yen, roi nhan Enter...
+    ...
+
+  >> Dat ESP32 voi '-Z up', giu yen, roi nhan Enter...
+    ...
+
+  [OK] saved -> calib.json
+
+  "+X up" nghĩa là gì?
+
+  Trên module GY-521 (MPU6050 breakout phổ biến), trục in trên silkscreen thường là:
+  - X: dọc theo cạnh dài board, có mũi tên hoặc chữ "X"
+  - Y: dọc theo cạnh ngắn
+  - Z: vuông góc với mặt board (đi lên/xuống xuyên qua chip)
+
+  "+X up" = xoay board sao cho mũi tên +X chỉ thẳng lên trần nhà (trọng lực kéo theo chiều -X của board → accel sensor đo được +g trên trục X sau khi tách gravity).
+
+  Cách thực tế:
+  - Đặt board phẳng trên bàn, mặt chip lên trên = +Z up
+  - Lật úp = -Z up
+  - Dựng đứng cạnh dài lên = +X up hoặc -X up (tùy hướng)
+  - Dựng đứng cạnh ngắn lên = +Y up hoặc -Y up
+
+  Mỗi mặt giữ yên ~3 giây (script lấy 300 mẫu ở 100 Hz).
+
+  Chuẩn bị trước khi chạy
+
+  # 1. ESP32 phai dang chay va publish raw stream
+  #    Cach de nhat: flash voi MILESTONE_LEVEL = 2 (raw tu bat)
+  #    Hoac: dang Level 3 thi gui command
+  mosquitto_pub -h 127.0.0.1 -t usth/pdr/cmd/raw_on -m ""
+
+  # 2. Mosquitto + ESP32 dang connect (check status topic):
+  mosquitto_sub -h 127.0.0.1 -t usth/pdr/dev01/status -v
+  #    Phai thay "uptime_s" tang dan
+
+  # 3. Chay calib
+  python calibrate_mpu.py --broker 127.0.0.1 --device dev01 --out calib.json
+
+  ⚠ Vấn đề tôi chưa giải quyết: nạp calib.json vào ESP32
+
+  Hiện tại calib.json chỉ là file local — firmware chưa tự đọc được. Có 3 cách workaround:
+
+  Cách A — Hard-code tạm trong main.cpp
+
+  Sau khi có calib.json, mở firmware/src/main.cpp, sửa block setup:
+  calibration::Data cal;
+  if (calibration::load(cal)) {
+      Serial.println("[CAL] loaded from NVS");
+  } else {
+      // Hard-code tu calib.json
+      cal.acc_bias[0]  = 0.12f;  cal.acc_bias[1]  = -0.08f; cal.acc_bias[2]  = 0.21f;
+      cal.acc_scale[0] = 1.003f; cal.acc_scale[1] = 0.998f; cal.acc_scale[2] = 1.011f;
+      cal.gyro_bias[0] = -0.0021f; cal.gyro_bias[1] = 0.0034f; cal.gyro_bias[2] = -0.0015f;
+      calibration::save(cal);  // luu vao NVS de lan sau khong can hard-code
+      Serial.println("[CAL] hard-coded + saved to NVS");
+  }
+  Flash 1 lần là NVS giữ luôn, lần sau khỏi cần.
+
+  Cách B — Tôi viết tool nạp calib qua MQTT (clean nhất)
+
+  Thêm command usth/pdr/cmd/calib_apply nhận JSON → ESP32 parse → ghi NVS → done. Bạn chỉ cần:
+  python apply_calib.py --calib calib.json
+  và xong.
+
+  Cách C — Để đó, dùng default
+
+  Calibration default = bias 0, scale 1. Heading sẽ drift nhanh hơn, step count sai ~20%. Cho demo nhanh thì OK, cho data quality thì không.
+================================================================================
+Bối cảnh: tại sao cần copy gì đó
+
+  Có 2 phía tách biệt:
+
+  PHÍA LAPTOP                           PHÍA ESP32
+  ─────────────────────                 ──────────────────
+  calibrate_mpu.py                      Có 1 vùng NVS (Non-Volatile Storage)
+     tính bias/scale                    đọc/ghi qua Preferences API
+     ghi ra calib.json                  Code firmware tự load lúc boot:
+                                          calibration::load(cal);
+                                          imu::applyCalibration(...);
+
+  Vấn đề: không có dây nối tự động giữa calib.json (file trên laptop) và NVS (flash trên ESP32). Calib chỉ có nghĩa khi
+  values nằm trong ESP32, không phải nằm trong file trên máy bạn.
+
+  NVS là gì?
+
+  NVS = "Non-Volatile Storage" — vùng flash riêng của ESP32 để lưu key/value. Đặc điểm:
+  - Giữ qua reset / cúp điện (khác RAM, sẽ bay)
+  - Giữ qua flash firmware mới (vì partition NVS tách biệt) — TRỪ KHI bạn dùng pio run -t erase_flash (xóa toàn bộ
+  flash)
+  - Mỗi device có NVS riêng → cùng 1 firmware nạp 10 device, mỗi device có 1 calib khác nhau ✅
+  - API trong file calibration.cpp: Preferences prefs; prefs.getBytes(...); prefs.putBytes(...)
+
+  Quy trình "copy bằng tay" chi tiết
+
+  Bước 1 — Có file calib.json
+
+  Sau khi chạy python calibrate_mpu.py, mở file (vd ở tools/calib.json):
+  {
+    "acc_bias":  [0.1234, -0.0812, 0.2103],
+    "acc_scale": [1.0034, 0.9982, 1.0114],
+    "gyro_bias": [-0.002134, 0.003421, -0.001523],
+    "n_samples_per_face": 300
+  }
+
+  Bước 2 — Mở firmware/src/main.cpp, tìm block trong setup():
+
+  calibration::Data cal;
+  if (calibration::load(cal)) {
+      Serial.println("[CAL] loaded from NVS");
+  } else {
+      Serial.println("[CAL] NVS trong - nen calib truoc khi dung.");
+      // ...
+  }
+
+  Bước 3 — Thêm hard-code TRƯỚC dòng imu::applyCalibration(...):
+
+  // === HARD-CODE CALIB TU FILE calib.json ===
+  // Chi can flash 1 lan - sau khi save(), NVS giu va load() se tra ve OK.
+  // Lan flash sau co the xoa khoi block nay neu muon.
+  cal.acc_bias[0]  =  0.1234f;
+  cal.acc_bias[1]  = -0.0812f;
+  cal.acc_bias[2]  =  0.2103f;
+  cal.acc_scale[0] =  1.0034f;
+  cal.acc_scale[1] =  0.9982f;
+  cal.acc_scale[2] =  1.0114f;
+  cal.gyro_bias[0] = -0.002134f;
+  cal.gyro_bias[1] =  0.003421f;
+  cal.gyro_bias[2] = -0.001523f;
+  calibration::save(cal);   // ghi vao NVS de lan sau khoi cần hard-code
+  Serial.println("[CAL] hard-coded -> NVS");
+  // === HET HARD-CODE ===
+
+  calibration::printSummary(cal);
+  imu::applyCalibration(cal.acc_bias, cal.acc_scale, cal.gyro_bias);
+
+  Bước 4 — Flash
+
+  cd firmware
+  pio run -t upload
+
+  Boot → setup() chạy đoạn hard-code → calibration::save(cal) ghi NVS → imu::applyCalibration áp dụng.
+
+  Bước 5 — Xác minh đã vào NVS
+
+  Reset ESP32 (không flash lại) → boot lần 2 → serial monitor sẽ in:
+  [CAL] loaded from NVS
+  [CAL] acc_bias  = [0.1234 -0.0812 0.2103] m/s^2
+  ...
+  → load() trả về true → block hard-code không cần chạy lại.
+
+  Bước 6 (tùy chọn) — Xóa hard-code
+
+  Vì NVS đã giữ, bạn có thể xóa block hard-code khỏi main.cpp để code sạch. Calib vẫn còn trong NVS đến khi:
+  - Bạn gọi calibration::clear() (qua MQTT /calib_clear)
+  - Hoặc pio run -t erase_flash (xóa toàn bộ flash)
+  - Hoặc đổi NVS_NAMESPACE trong config.h
+
+  Tại sao thiết kế lại tách 2 phía như vậy?
+
+  Đây là pattern phổ biến trong embedded:
+  - Compute trên laptop (Python, scipy): vì laptop có RAM/CPU dư, dễ visualize số liệu, dễ thử nhiều thuật toán
+  - Lưu trên device (NVS): vì khi xuất xưởng, mỗi device phải tự đứng được, không phụ thuộc laptop
+
+  Calib là per-device, không phải per-firmware → không thể nhét vào firmware binary chung cho mọi device. NVS là chỗ
+  đúng để chứa.
+
+  Bridge giữa 2 phía thường có 3 lựa chọn:
+  1. File copy thủ công (cách bạn đang học) — đơn giản nhất, dùng cho dev/prototype
+  2. Tool tự push qua serial/MQTT — tốt hơn cho fleet, vài chục device
+  3. On-device calibration — tự chứa, không cần laptop (là cái tôi vừa thêm vào, hơi vội)
+
+  Mỗi cách dùng cho 1 context khác. Bạn hiểu cả 3 thì có lựa chọn cho từng project sau.
