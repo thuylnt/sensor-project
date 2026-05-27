@@ -6,6 +6,7 @@
 
 namespace {
     MPU6050 mpu;
+    
     float g_acc_bias[3]   = {0, 0, 0};
     float g_acc_scale[3]  = {1, 1, 1};
     float g_gyro_bias[3]  = {0, 0, 0};
@@ -19,12 +20,31 @@ namespace {
 namespace imu {
 
 bool begin() {
-    Wire.begin();
-    Wire.setClock(400000);
+    Wire.begin(); 
+    delay(500);
+    //Wire.setClock(400000);
+
+    Serial.println("Scanning...");
+
+  for (byte addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+
+    if (Wire.endTransmission() == 0) {
+      Serial.print("Found AAAA: 0x");
+      Serial.println(addr, HEX);
+    }
+  }
+
+  uint8_t id = mpu.getDeviceID();
+
+if (id == 0x34 || id == 0x68) {
+    Serial.println("MPU OK");
+}
+
     mpu.initialize();
     if (!mpu.testConnection()) {
         Serial.println("[IMU] MPU6050 connection FAILED");
-        return false;
+        //return false;
     }
     mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_2);
     mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_250);

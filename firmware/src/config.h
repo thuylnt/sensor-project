@@ -10,14 +10,14 @@
 //       -> dung de verify I2C + WiFi + MQTT + dashboard hien data
 //   3 = full pipeline voi heuristic inference (variance-based, khong can model file)
 //   4 = full pipeline voi TFLite int8 model that (USE_TFLITE=1 trong inference.cpp)
-#define MILESTONE_LEVEL 2
+#define MILESTONE_LEVEL 3
 
 // === Calibration method khi NVS trong ===
 //   0 = khong tu calib (dung default bias=0 scale=1, hoac hard-code trong main.cpp)
 //   1 = stationary "teacher-style" (calibration::stationaryCalib()): yen Z up, 1000 mau
 //   2 = bo qua hoan toan (chap nhan default)
 // Doi sang khac, gui MQTT 'usth/pdr/cmd/calib_clear' roi reset ESP32 de calib lai.
-#define CALIB_METHOD 1
+#define CALIB_METHOD 0
 
 // === Device ID xuat hien trong MQTT topic usth/pdr/<DEVICE_ID>/... ===
 #define DEVICE_ID "dev01"
@@ -25,7 +25,7 @@
 // === OLED SSD1306 128x64 tren cung I2C bus voi MPU6050 ===
 // 1 = hien thi thong tin len OLED (~10% CPU core0, ~10% sample drop @ 100Hz)
 // 0 = tat hoan toan, khong khoi tao OLED, khong tao display task
-#define OLED_ENABLED 1
+#define OLED_ENABLED 0
 #define OLED_I2C_ADDR 0x3C
 #define OLED_REFRESH_MS 250        // 4 Hz
 
@@ -35,7 +35,7 @@
 #define WIFI_PASSWORD "usth2021!"
 
 // === MQTT broker ===
-#define MQTT_HOST "10.10.12.111"   // IP laptop chay docker-compose
+#define MQTT_HOST "10.10.14.62"   // IP laptop chay docker-compose
 #define MQTT_PORT 1883
 #define MQTT_KEEPALIVE 30
 
