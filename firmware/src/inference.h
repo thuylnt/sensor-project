@@ -10,6 +10,7 @@ namespace inference {
     };
 
     bool begin();
-    // Window: [WINDOW_SIZE][NUM_AXES] da z-score. Tra ve true neu inference thanh cong.
-    bool classify(const float* window, Result& out);
+    // Window: [WINDOW_SIZE][NUM_AXES] o don vi THUC (m/s^2, rad/s), CHUA z-score.
+    // classify() se tinh variance cho heuristic, va z-score (in-place) cho TFLM.
+    bool classify(float* window, Result& out);
 }

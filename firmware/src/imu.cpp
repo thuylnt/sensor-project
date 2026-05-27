@@ -42,7 +42,7 @@ void applyCalibration(const float acc_bias[3], const float acc_scale[3], const f
     }
 }
 
-bool read(ImuSample& s) {
+bool read(ImuSample& s, ImuSample* raw_out) {
     int16_t ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw;
     if (!i2c_bus::lock(20)) return false;   // OLED dang refresh, bo qua sample nay
     mpu.getMotion6(&ax_raw, &ay_raw, &az_raw, &gx_raw, &gy_raw, &gz_raw);
@@ -55,6 +55,13 @@ bool read(ImuSample& s) {
     float gy = (gy_raw / GYRO_LSB_PER_DPS) * DEG2RAD;
     float gz = (gz_raw / GYRO_LSB_PER_DPS) * DEG2RAD;
 
+    uint32_t now = millis();
+    if (raw_out) {
+        raw_out->ts_ms = now;
+        raw_out->ax = ax; raw_out->ay = ay; raw_out->az = az;
+        raw_out->gx = gx; raw_out->gy = gy; raw_out->gz = gz;
+    }
+
     // ap calibration
     s.ax = (ax - g_acc_bias[0]) * g_acc_scale[0];
     s.ay = (ay - g_acc_bias[1]) * g_acc_scale[1];
@@ -62,7 +69,7 @@ bool read(ImuSample& s) {
     s.gx = gx - g_gyro_bias[0];
     s.gy = gy - g_gyro_bias[1];
     s.gz = gz - g_gyro_bias[2];
-    s.ts_ms = millis();
+    s.ts_ms = now;
     return true;
 }
 

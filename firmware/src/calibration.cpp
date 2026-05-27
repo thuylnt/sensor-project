@@ -1,5 +1,6 @@
 #include "calibration.h"
 #include "config.h"
+#include "imu.h"
 #include <Preferences.h>
 
 namespace calibration {
@@ -40,6 +41,56 @@ void printSummary(const Data& d) {
     Serial.printf("[CAL] acc_bias  = [%.4f %.4f %.4f] m/s^2\n", d.acc_bias[0], d.acc_bias[1], d.acc_bias[2]);
     Serial.printf("[CAL] acc_scale = [%.4f %.4f %.4f]\n", d.acc_scale[0], d.acc_scale[1], d.acc_scale[2]);
     Serial.printf("[CAL] gyro_bias = [%.6f %.6f %.6f] rad/s\n", d.gyro_bias[0], d.gyro_bias[1], d.gyro_bias[2]);
+}
+
+bool stationaryCalib(int n_samples) {
+    Serial.println("\n[CAL] === TEACHER-STYLE STATIONARY CALIBRATION ===");
+    Serial.println("[CAL] Dat ESP32 nam YEN tren mat phang, mat chip huong LEN.");
+    Serial.println("[CAL] Bat dau sau 3 giay...");
+    for (int i = 3; i > 0; --i) { Serial.printf("[CAL] %d...\n", i); delay(1000); }
+
+    // Tat ap calib hien tai de doc gia tri raw thuan tuy
+    float zero[3] = {0, 0, 0};
+    float one[3]  = {1, 1, 1};
+    imu::applyCalibration(zero, one, zero);
+
+    Serial.printf("[CAL] Sampling %d readings (~%.1f giay)...\n",
+                  n_samples, (float)n_samples / SAMPLE_RATE_HZ);
+    double sa[3] = {0, 0, 0}, sg[3] = {0, 0, 0};
+    ImuSample s;
+    int got = 0;
+    uint32_t t0 = millis();
+    while (got < n_samples && millis() - t0 < 20000) {
+        if (imu::read(s)) {
+            sa[0] += s.ax; sa[1] += s.ay; sa[2] += s.az;
+            sg[0] += s.gx; sg[1] += s.gy; sg[2] += s.gz;
+            got++;
+        }
+        delay(2);
+    }
+    if (got == 0) {
+        Serial.println("[CAL] ERR: khong doc duoc IMU - huy");
+        return false;
+    }
+
+    Data d{};
+    d.acc_bias[0]  = (float)(sa[0] / got);
+    d.acc_bias[1]  = (float)(sa[1] / got);
+    d.acc_bias[2]  = (float)(sa[2] / got) - GRAVITY_MS2;  // Z up => +1g khi yen
+    d.acc_scale[0] = d.acc_scale[1] = d.acc_scale[2] = 1.0f;
+    d.gyro_bias[0] = (float)(sg[0] / got);
+    d.gyro_bias[1] = (float)(sg[1] / got);
+    d.gyro_bias[2] = (float)(sg[2] / got);
+
+    Serial.printf("[CAL] Da lay %d mau.\n", got);
+    printSummary(d);
+    if (!save(d)) {
+        Serial.println("[CAL] ERR: save NVS FAIL");
+        return false;
+    }
+    imu::applyCalibration(d.acc_bias, d.acc_scale, d.gyro_bias);
+    Serial.println("[CAL] Da luu NVS + ap dung. Lan sau khong can chay lai.");
+    return true;
 }
 
 } // namespace calibration

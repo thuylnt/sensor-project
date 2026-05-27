@@ -132,6 +132,17 @@ void publishPose(const pdr::State& s) {
     route(MQTT_TOPIC_POSE, buf, n);
 }
 
+void publishPoseAt(const char* topic, float x, float y, float heading_deg) {
+    JsonDocument doc;
+    doc["ts"] = (uint64_t)millis();
+    doc["x"] = x;
+    doc["y"] = y;
+    doc["heading_deg"] = heading_deg;
+    char buf[160];
+    size_t n = serializeJson(doc, buf, sizeof(buf));
+    route(topic, buf, n);
+}
+
 void publishStatus() {
     JsonDocument doc;
     doc["ts"] = (uint64_t)millis();

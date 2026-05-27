@@ -1,0 +1,167 @@
+ Bảng các MQTT topic ESP32 đang publish
+
+  ┌───────────────────────────┬───────────────┬─────────────────────────────────────────────────────┬─────────────────────────────────────┬────────────────────────────────────────────┐
+  │           Topic           │   Tần suất    │                       Ý nghĩa                       │             Ai publish              │           Dashboard có vẽ không?           │
+  ├───────────────────────────┼───────────────┼─────────────────────────────────────────────────────┼─────────────────────────────────────┼────────────────────────────────────────────┤
+  │ usth/pdr/<dev>/raw        │ 100 Hz        │ IMU thô (đã low-pass + đã calib): ax,ay,az,gx,gy,gz │ Khi raw_stream=on hoặc              │ ❌ Không có widget — chỉ dùng cho          │
+  │                           │               │                                                     │ MILESTONE_LEVEL≤2                   │ collect_label.py                           │
+  ├───────────────────────────┼───────────────┼─────────────────────────────────────────────────────┼─────────────────────────────────────┼────────────────────────────────────────────┤
+  │ usth/pdr/<dev>/activity   │ 1 Hz          │ Kết quả HAR: {class, confidence}                    │ Sau mỗi window 1 giây               │ ✅ Text widget "Hoat dong hien tai"        │
+  ├───────────────────────────┼───────────────┼─────────────────────────────────────────────────────┼─────────────────────────────────────┼────────────────────────────────────────────┤
+  │ usth/pdr/<dev>/step       │ mỗi step      │ {count, cadence, stride}                            │ Khi step detector phát hiện peak    │ ❌ Chưa có widget — đây là gap             │
+  ├───────────────────────────┼───────────────┼─────────────────────────────────────────────────────┼─────────────────────────────────────┼────────────────────────────────────────────┤
+  │ usth/pdr/<dev>/pose       │ 1 Hz          │ Vị trí + heading hiện tại của full pipeline         │ Mỗi window                          │ ✅ Đường 🟢 Full trên canvas               │
+  ├───────────────────────────┼───────────────┼─────────────────────────────────────────────────────┼─────────────────────────────────────┼────────────────────────────────────────────┤
+  │ usth/pdr/<dev>/pose_calib │ —             │ Vị trí của calib-only pipeline (calib mà không có   │ CHƯA AI publish                     │ ⏳ Đường 🟠 chờ data                       │
+  │                           │               │ HAR gating)                                         │                                     │                                            │
+  ├───────────────────────────┼───────────────┼─────────────────────────────────────────────────────┼─────────────────────────────────────┼────────────────────────────────────────────┤
+  │ usth/pdr/<dev>/pose_raw   │ —             │ Vị trí của raw pipeline (không calib, không HAR)    │ CHƯA AI publish                     │ ⏳ Đường 🔴 chờ data                       │
+  ├───────────────────────────┼───────────────┼─────────────────────────────────────────────────────┼─────────────────────────────────────┼────────────────────────────────────────────┤
+  │ usth/pdr/<dev>/status     │ 0.1 Hz        │ uptime, RSSI, free_heap, raw_stream,                │ Mỗi 10s                             │ ❌ Chưa có widget                          │
+  │                           │ retained      │ offline_records                                     │                                     │                                            │
+  └───────────────────────────┴───────────────┴─────────────────────────────────────────────────────┴─────────────────────────────────────┴────────────────────────────────────────────┘
+
+  Giải thích từng vấn đề bạn gặp
+
+  1. "Không thấy pose_calib"
+
+  Đúng — vì firmware không publish nó. Trong code firmware hiện tại chỉ có 1 PDR pipeline duy nhất (full), publish ra topic pose. Hai topic pose_calib và pose_raw chỉ được publish bởi
+  simulator (simulate_device.py) để bạn có 3 đường so sánh khi test dashboard.
+
+  Để có 3 đường trên thiết bị thật: phải refactor pdr.cpp thành class có thể instantiate nhiều lần, rồi tạo 3 instance:
+  - 1 instance ăn IMU chưa calib + không HAR → publish pose_raw
+  - 1 instance ăn IMU đã calib + không HAR → publish pose_calib
+  - 1 instance ăn IMU đã calib + có HAR → publish pose
+
+  Đây là việc ~1 ngày, tôi chưa làm. Lúc nào bạn cần thì nói.
+
+  2. "Step không thấy lấy"
+
+  Đúng — dashboard chưa có widget step. Topic step đang publish bình thường khi step detector phát hiện peak, nhưng tôi quên chưa thêm widget vào flows.json để hiển thị.
+
+  Kiểm tra nhanh có publish hay không:
+  mosquitto_sub -h localhost -t 'usth/pdr/+/step' -v
+
+  Nếu thấy message → backend OK, chỉ là dashboard chưa subscribe. Tôi có thể thêm widget "Step count: 1234 / Cadence: 108 spm" trong group Activity — chỉ 1 ui_text node nhỏ, ~10 dòng JSON.
+
+  3. "Lệch và không ổn định"
+
+  Đây là vấn đề nghiêm trọng hơn cả và có thể có nhiều nguyên nhân chồng chéo. Mình kể từ phổ biến → hiếm:
+
+  Nguyên nhân #1 — Bạn đang ở MILESTONE_LEVEL = 2 và activity bị fake "walk"
+
+  Nhìn lại code milestone 2 trong main.cpp:
+  #if MILESTONE_LEVEL <= 2
+      inference::Result r = { ACT_WALK, 0.9f, ... };
+      pdr::setActivity(ACT_WALK);
+
+  → PDR luôn nghĩ "đang đi" → step detector luôn bật → mỗi rung tay nhẹ cũng tính 1 step → trajectory bay tứ tung.
+
+  → Gyro bias EMA chỉ update khi activity=STAND → ở level 2 không bao giờ update → heading drift tích lũy nhanh.
+
+  → Đổi MILESTONE_LEVEL = 3 ngay. Heuristic variance-based classifier sẽ phát hiện đứng yên đúng → step counter chỉ chạy khi bạn thật sự đi → gyro bias EMA update khi đứng yên → drift giảm
+   hẳn.
+
+  Nguyên nhân #2 — MPU6050 chưa warm-up
+
+  Sensor MPU6050 có bias gyro drift theo nhiệt độ. Khi vừa cắm điện, chip lạnh → bias khác với khi chip ấm sau 2-3 phút.
+
+  Nếu bạn calibrate khi vừa boot → bias đo được không đúng cho lúc đang dùng (chip nóng hơn).
+
+  → Để ESP32 chạy 3-5 phút trước khi calib, hoặc calib khi chip đã ấm.
+
+  Nguyên nhân #3 — Calibration giá trị sai
+
+  Mở serial monitor, sau khi boot sẽ thấy:
+  [CAL] loaded from NVS
+  [CAL] acc_bias  = [?.???? ?.???? ?.????] m/s^2
+  [CAL] acc_scale = [?.???? ?.???? ?.????]
+  [CAL] gyro_bias = [?.?????? ?.?????? ?.??????] rad/s
+
+  Sanity check các giá trị:
+  - acc_bias: nên trong khoảng [-0.5, 0.5] m/s². Nếu > 1.0 m/s² là quá lớn — calib bị lỗi.
+  - acc_scale: nên trong [0.95, 1.05]. Nếu 1.5 hoặc 0.6 → 6-face calib làm sai (lật nhầm trục).
+  - gyro_bias: nên < 0.05 rad/s. Nếu > 0.1 rad/s → có thể đã cầm tay khi calib.
+
+  Nếu bất kỳ giá trị nào "phi lý" → calib lại.
+
+  Nguyên nhân #4 — Chưa nạp calib vào ESP32
+
+  Bạn có calib.json rồi nhưng nhớ phần "copy bằng tay" — đã làm chưa? Nếu chưa, ESP32 đang dùng bias=0, scale=1 (default) → IMU thô không calib → drift kinh hoàng.
+
+  Verify trên serial monitor xem có dòng [CAL] loaded from NVS hay [CAL] NVS trong - dung default. Nếu là dòng thứ 2 → chưa nạp calib.
+
+  Nguyên nhân #5 — Cảm biến bị rung / lung lay
+
+  ESP32 + breadboard + dây nhợ chưa cố định → mỗi bước rung thêm rung phụ → IMU đo cả "bước người" lẫn "rung breadboard" → step counter giả + heading nhiễu.
+
+  → Cố định ESP32 vào hộp/dán băng dính + đeo chặt thắt lưng (không lủng lẳng).
+
+  Nguyên nhân #6 — Auto-reset 3 phút
+
+  Mở config.h:
+  #define HEADING_RESET_AFTER_MS 180000   // 3 phut
+
+  PDR tự reset trajectory sau 3 phút → nếu bạn đứng nhìn dashboard 3+ phút thì sẽ thấy đường biến mất. Không phải drift, là feature.
+
+  → Đặt 0 để tắt auto-reset, hoặc tăng lên 600000 (10 phút).
+
+  Đề xuất debug từng bước
+
+  Thử theo thứ tự sau, mỗi bước giải quyết 1 lớp:
+
+  Bước 1 — Verify firmware đang nạp đúng calib
+
+  Serial monitor sau boot:
+  [CAL] loaded from NVS                       ← phai co dong nay
+  [CAL] acc_bias  = [0.12 -0.08 0.21] m/s^2   ← so nho, hop ly
+  [CAL] acc_scale = [1.003 0.998 1.011]       ← gan 1.0
+  [CAL] gyro_bias = [-0.002 0.003 -0.001]     ← gan 0
+  Nếu không OK → chưa nạp calib, hard-code lại theo calib.json.
+
+  Bước 2 — Đặt ESP32 yên trên bàn, xem raw
+
+  Trong terminal:
+  mosquitto_sub -h localhost -t 'usth/pdr/dev01/raw' -v | head -20
+  Mong đợi: az ≈ 9.8, các trục khác ≈ 0, gyro tất cả ≈ 0. Nếu lệch nhiều → calib chưa áp dụng.
+
+  Bước 3 — Đổi MILESTONE_LEVEL = 3 và flash lại
+
+  Heuristic classifier sẽ phân biệt đứng/đi → PDR hoạt động đúng intent.
+
+  Bước 4 — Quan sát trên dashboard
+
+  Đứng yên 10 giây: pose phải gần như đứng yên trên canvas, không trôi. Đi 1 đoạn → đường vẽ theo hướng đi.
+
+  Nếu vẫn lệch nhiều → có thể là vấn đề chip MPU6050 cụ thể (mỗi chip drift khác nhau). Lúc đó cần thực nghiệm xem drift bao nhiêu là chấp nhận được.
+
+  Tôi có thể làm gì tiếp theo cho bạn?
+
+  [CAL] gyro_bias = [-0.002 0.003 -0.001]     ← gan 0
+  Nếu không OK → chưa nạp calib, hard-code lại theo calib.json.
+
+  Bước 2 — Đặt ESP32 yên trên bàn, xem raw
+
+  Trong terminal:
+  mosquitto_sub -h localhost -t 'usth/pdr/dev01/raw' -v | head -20
+  Mong đợi: az ≈ 9.8, các trục khác ≈ 0, gyro tất cả ≈ 0. Nếu lệch nhiều → calib chưa áp dụng.
+
+  Bước 3 — Đổi MILESTONE_LEVEL = 3 và flash lại
+
+  Heuristic classifier sẽ phân biệt đứng/đi → PDR hoạt động đúng intent.
+
+  Bước 4 — Quan sát trên dashboard
+
+  Đứng yên 10 giây: pose phải gần như đứng yên trên canvas, không trôi. Đi 1 đoạn → đường vẽ theo hướng đi.
+
+  Nếu vẫn lệch nhiều → có thể là vấn đề chip MPU6050 cụ thể (mỗi chip drift khác nhau). Lúc đó cần thực nghiệm xem drift bao nhiêu là chấp nhận được.
+
+  Tôi có thể làm gì tiếp theo cho bạn?
+
+  Tùy bạn muốn xử lý nào trước:
+
+  1. Thêm widget step + cadence + status vào dashboard (~10 phút) — để bạn nhìn thấy data đầy đủ
+  2. Refactor PDR thành class instantiate được 3 lần (~1 ngày) — để firmware thật cũng có 3 đường
+  3. Tạm bỏ qua cả 2, focus debug calib trước — verify firmware nạp calib đúng + đổi level 3
+
+  Nói tôi chọn cái nào.
