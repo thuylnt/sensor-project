@@ -9,6 +9,8 @@ struct ImuSample {
 
 namespace imu {
     bool begin();
-    bool read(ImuSample& s);
+    // Doc 1 mau. Tham so raw_out (tuy chon): neu khac nullptr, fill bang gia tri
+    // CHUA AP CALIB (chi co don vi chuyen sang SI). Dung cho pipeline pose_raw.
+    bool read(ImuSample& calibrated, ImuSample* raw_out = nullptr);
     void applyCalibration(const float acc_bias[3], const float acc_scale[3], const float gyro_bias[3]);
 }

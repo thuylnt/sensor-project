@@ -1,0 +1,127 @@
+Pipeline tổng thể (theo thời gian)
+
+  ═══════════════════ BOOT ONCE (setup) ═══════════════════
+  1. Load calibration từ NVS                              calibration::load()
+  2. imu::applyCalibration(bias, scale, gyro_bias)
+                            (lưu 3 array vào module imu)
+
+  ═══════════════ EVERY SAMPLE @ 100Hz (sensorTask) ═══════════════
+
+         ┌─────────────────────────────────────────────┐
+         │ STEP A: IMU đọc + CALIBRATION TĨNH           │
+         │ ─────────────────────────────────────────── │
+         │ imu::read(s, &s_raw)                         │
+         │   raw → SI units → trừ bias → nhân scale    │ ← calibration TĨNH (1-shot)
+         │   s.ax = (ax - acc_bias[0]) * acc_scale[0]   │
+         │   s.gz = gz - gyro_bias[2]                   │
+         └────────────────┬─────────────────────────────┘
+                          │ s = đã calib tĩnh
+                          ▼
+         ┌─────────────────────────────────────────────┐
+         │ STEP B: FILTERS                              │
+         │ ─────────────────────────────────────────── │
+         │ preprocess::applyLowPass(s)    LPF 10 Hz     │
+         │ preprocess::applyGravityHPF(s) tách gravity  │
+         └────────────────┬─────────────────────────────┘
+                          │ s = LPF'd + gravity tracked
+                          ▼
+         ┌─────────────────────────────────────────────┐
+         │ STEP C: pdr::update()  ← EMA BIAS Ở ĐÂY      │
+         │ ─────────────────────────────────────────── │
+         │ if (activity == STAND):                      │
+         │   g_gz_bias_ema = 0.99 * old + 0.01 * s.gz   │ ← EMA ĐỘNG (per-sample)
+         │ gz_corr = s.gz - g_gz_bias_ema              │ ← lớp bias correction thứ 2
+         │ heading += gz_corr * dt                      │
+         │ step detect → x, y update                    │
+         └────────────────┬─────────────────────────────┘
+                          │ pdr::State = {x, y, heading, step_count}
+                          ▼
+         ┌─────────────────────────────────────────────┐
+         │ STEP D: Push window vào ring buffer cho CNN │
+         │ + cập nhật alt paths (raw, calib)            │
+         └─────────────────────────────────────────────┘
+
+  ═══════════════ EVERY WINDOW @ 1Hz (inference cycle) ═══════════════
+
+         ┌─────────────────────────────────────────────┐
+         │ STEP E: classify(window)                     │
+         │ ─────────────────────────────────────────── │
+         │ Tính variance accel → ra activity class      │
+         │ pdr::setActivity(r.cls)                      │ ← phản hồi VỀ pdr cho EMA
+         │   ↑ cập nhật cờ g_activity                   │
+         │ ↑ giây tiếp theo step C dùng cờ này         │
+         └────────────────┬─────────────────────────────┘
+                          │ result + state
+                          ▼
+         ┌─────────────────────────────────────────────┐
+         │ STEP F: Publish MQTT                         │
+         │ ─────────────────────────────────────────── │
+         │ mqttc::publishActivity(r)   → /activity      │
+         │ mqttc::publishPose(state)   → /pose          │
+         │ mqttc::publishPoseAt(/calib, ...) ← path 2   │
+         │ mqttc::publishPoseAt(/raw,   ...) ← path 3   │
+         └────────────────┬─────────────────────────────┘
+                          │ JSON over WiFi
+                          ▼
+                    [Mosquitto broker]
+                          │
+                    ┌─────┴─────┐
+                    ▼           ▼
+                [Telegraf]  [Node-RED]
+                   │           │
+                   ▼           ▼
+               [InfluxDB]  [Dashboard]
+                + Grafana   (canvas, compass, drift...)
+
+  Trả lời câu hỏi cụ thể
+
+  ▎ "Sau calibrate, thì đến cái EMA này, rồi mới đưa về NodeRed à?"
+
+  Đúng. Cụ thể:
+
+  ┌─────────────────────┬────────────────────────┬───────────────────────────────────────────┐
+  │      Giai đoạn      │        Khi nào         │              Làm gì với bias              │
+  ├─────────────────────┼────────────────────────┼───────────────────────────────────────────┤
+  │ Calibration tĩnh    │ Boot 1 lần             │ Trừ bias lúc calib (e.g., chip mới, lạnh) │
+  ├─────────────────────┼────────────────────────┼───────────────────────────────────────────┤
+  │ EMA bias correction │ Mỗi sample (nếu STAND) │ Trừ thêm bias drift do nhiệt đang diễn ra │
+  ├─────────────────────┼────────────────────────┼───────────────────────────────────────────┤
+  │ Heading integration │ Mỗi sample             │ Tích phân gyro đã bù 2 lớp bias           │
+  ├─────────────────────┼────────────────────────┼───────────────────────────────────────────┤
+  │ Send to Node-RED    │ Mỗi giây               │ Heading đã qua cả 2 lớp                   │
+  └─────────────────────┴────────────────────────┴───────────────────────────────────────────┘
+
+  → Heading mà Node-RED nhận đã là (gyro raw) - (calib bias) - (EMA bias) rồi tích phân.
+
+  2 lớp bias correction — vai trò khác nhau
+
+  gyro_z reading từ chip                   = bias_factory + bias_temperature(t) + noise + signal
+                                              ↑              ↑                              ↑
+                                              cố định       thay đổi theo t                 cái muốn đo
+
+  sau calib tĩnh (lúc t=t_calib):           = bias_temperature(t) - bias_temperature(t_calib) + noise + signal
+                                              ↑
+                                              phần residual do nhiệt độ chip THAY ĐỔI sau calib
+
+  sau EMA (chỉ chạy khi STAND):             ≈ noise + signal
+                                              ↑
+                                              đã loại bỏ phần nhiệt độ động (nếu bạn có lúc đứng yên)
+
+  Đây chính là lý do tài liệu của bạn nói về temperature compensation = vai trò mà EMA đang làm gián tiếp.
+
+  Phân biệt cụ thể:
+  - Nếu thêm temperature compensation theo linear regression: predict bias từ temp sensor → trừ ra → kể cả khi không
+  bao giờ STAND, bias vẫn được correct
+  - EMA hiện tại: chỉ correct khi user có STAND định kỳ → nếu user chạy bộ 30 phút không nghỉ, EMA bị frozen → drift
+  tích lũy
+
+  → 2 cách bổ trợ nhau, không loại trừ nhau.
+
+  Tóm tắt 3-câu
+
+  1. Calib tĩnh chạy 1 lần lúc boot, trừ ra bias đã đo từ trước (lưu NVS).
+  2. EMA chạy mỗi sample khi HAR phát hiện STAND, trừ thêm bias đang trôi do nhiệt (live).
+  3. Heading sau khi qua 2 lớp mới được tích phân, ghép với position, publish ra MQTT → Node-RED chỉ nhận kết quả
+  cuối.
+
+  Calibrate là "1 cú bù", EMA là "bù liên tục". Cả 2 đều xảy ra trên ESP32, không phải trên Node-RED. Node-RED chỉ vẽ.

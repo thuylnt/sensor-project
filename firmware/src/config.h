@@ -12,6 +12,13 @@
 //   4 = full pipeline voi TFLite int8 model that (USE_TFLITE=1 trong inference.cpp)
 #define MILESTONE_LEVEL 2
 
+// === Calibration method khi NVS trong ===
+//   0 = khong tu calib (dung default bias=0 scale=1, hoac hard-code trong main.cpp)
+//   1 = stationary "teacher-style" (calibration::stationaryCalib()): yen Z up, 1000 mau
+//   2 = bo qua hoan toan (chap nhan default)
+// Doi sang khac, gui MQTT 'usth/pdr/cmd/calib_clear' roi reset ESP32 de calib lai.
+#define CALIB_METHOD 1
+
 // === Device ID xuat hien trong MQTT topic usth/pdr/<DEVICE_ID>/... ===
 #define DEVICE_ID "dev01"
 
@@ -66,10 +73,12 @@ static const char* const ACTIVITY_NAMES[ACT_NUM_CLASSES] = {"stand", "walk", "ru
 #define NVS_KEY_GYRO_BIAS "gyro_bias"
 
 // === MQTT topic builder ===
-#define MQTT_TOPIC_BASE "usth/pdr/" DEVICE_ID
-#define MQTT_TOPIC_ACTIVITY MQTT_TOPIC_BASE "/activity"
-#define MQTT_TOPIC_STEP     MQTT_TOPIC_BASE "/step"
-#define MQTT_TOPIC_POSE     MQTT_TOPIC_BASE "/pose"
-#define MQTT_TOPIC_STATUS   MQTT_TOPIC_BASE "/status"
-#define MQTT_TOPIC_RAW      MQTT_TOPIC_BASE "/raw"
-#define MQTT_TOPIC_CMD      "usth/pdr/cmd/+"
+#define MQTT_TOPIC_BASE       "usth/pdr/" DEVICE_ID
+#define MQTT_TOPIC_ACTIVITY   MQTT_TOPIC_BASE "/activity"
+#define MQTT_TOPIC_STEP       MQTT_TOPIC_BASE "/step"
+#define MQTT_TOPIC_POSE       MQTT_TOPIC_BASE "/pose"
+#define MQTT_TOPIC_POSE_CALIB MQTT_TOPIC_BASE "/pose_calib"
+#define MQTT_TOPIC_POSE_RAW   MQTT_TOPIC_BASE "/pose_raw"
+#define MQTT_TOPIC_STATUS     MQTT_TOPIC_BASE "/status"
+#define MQTT_TOPIC_RAW        MQTT_TOPIC_BASE "/raw"
+#define MQTT_TOPIC_CMD        "usth/pdr/cmd/+"

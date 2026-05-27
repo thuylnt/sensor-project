@@ -59,11 +59,31 @@
     "collapse": false
   },
   {
+    "id": "ui_group_stats",
+    "type": "ui_group",
+    "name": "Stats",
+    "tab": "ui_tab_main",
+    "order": 4,
+    "disp": true,
+    "width": "6",
+    "collapse": false
+  },
+  {
+    "id": "ui_group_drift",
+    "type": "ui_group",
+    "name": "Drift test",
+    "tab": "ui_tab_main",
+    "order": 5,
+    "disp": true,
+    "width": "6",
+    "collapse": false
+  },
+  {
     "id": "ui_group_ctrl",
     "type": "ui_group",
     "name": "Control",
     "tab": "ui_tab_main",
-    "order": 4,
+    "order": 6,
     "disp": true,
     "width": "3",
     "collapse": false
@@ -117,7 +137,7 @@
     "noerr": 0,
     "x": 320,
     "y": 60,
-    "wires": [["ui_traj", "ui_compass"]]
+    "wires": [["ui_traj", "ui_compass", "ui_drift"]]
   },
   {
     "id": "fn_pose_calib",
@@ -189,6 +209,104 @@
     "x": 320,
     "y": 240,
     "wires": []
+  },
+  {
+    "id": "in_step",
+    "type": "mqtt in",
+    "z": "tab_pdr",
+    "name": "step",
+    "topic": "usth/pdr/+/step",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "x": 130,
+    "y": 420,
+    "wires": [["fn_step_format"]]
+  },
+  {
+    "id": "fn_step_format",
+    "type": "function",
+    "z": "tab_pdr",
+    "name": "format step",
+    "func": "var s = msg.payload || {};\nmsg.payload = 'Steps ' + (s.count || 0) + '  •  Cadence ' + (s.cadence ? s.cadence.toFixed(0) : 0) + ' spm  •  Stride ' + (s.stride ? s.stride.toFixed(2) : 0) + ' m';\nreturn msg;",
+    "outputs": 1,
+    "x": 320,
+    "y": 420,
+    "wires": [["ui_step"]]
+  },
+  {
+    "id": "ui_step",
+    "type": "ui_text",
+    "z": "tab_pdr",
+    "group": "ui_group_stats",
+    "order": 1,
+    "width": "6",
+    "height": "1",
+    "name": "Step counter",
+    "label": "Steps",
+    "format": "{{msg.payload}}",
+    "layout": "col-center",
+    "x": 510,
+    "y": 420,
+    "wires": []
+  },
+  {
+    "id": "in_status",
+    "type": "mqtt in",
+    "z": "tab_pdr",
+    "name": "status",
+    "topic": "usth/pdr/+/status",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "mqtt_broker",
+    "x": 130,
+    "y": 480,
+    "wires": [["fn_status_format"]]
+  },
+  {
+    "id": "fn_status_format",
+    "type": "function",
+    "z": "tab_pdr",
+    "name": "format status",
+    "func": "var s = msg.payload || {};\nvar up = s.uptime_s || 0;\nvar h = Math.floor(up/3600);\nvar m = Math.floor((up%3600)/60);\nvar sec = up % 60;\nvar pad = function(n){return n < 10 ? '0'+n : ''+n;};\nvar heap_kb = Math.round((s.free_heap || 0) / 1024);\nmsg.payload = 'Up ' + h + ':' + pad(m) + ':' + pad(sec)\n  + '  •  RSSI ' + (s.rssi !== undefined ? s.rssi : '?') + ' dBm'\n  + '  •  Heap ' + heap_kb + ' KB'\n  + '  •  Offline ' + (s.offline_records || 0);\nreturn msg;",
+    "outputs": 1,
+    "x": 320,
+    "y": 480,
+    "wires": [["ui_status"]]
+  },
+  {
+    "id": "ui_status",
+    "type": "ui_text",
+    "z": "tab_pdr",
+    "group": "ui_group_stats",
+    "order": 2,
+    "width": "6",
+    "height": "1",
+    "name": "System status",
+    "label": "Status",
+    "format": "{{msg.payload}}",
+    "layout": "col-center",
+    "x": 510,
+    "y": 480,
+    "wires": []
+  },
+  {
+    "id": "ui_drift",
+    "type": "ui_template",
+    "z": "tab_pdr",
+    "group": "ui_group_drift",
+    "name": "Drift measurement",
+    "order": 1,
+    "width": "6",
+    "height": "5",
+    "format": "<div style=\"padding:10px;font-family:sans-serif;font-size:13px;color:#333\">\n  <div style=\"display:flex;gap:6px;margin-bottom:12px\">\n    <button onclick=\"window._driftMarkStart()\" style=\"background:#1976d2;color:white;padding:8px 16px;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold\">Mark start</button>\n    <button onclick=\"window._driftClear()\" style=\"padding:8px 16px;border:1px solid #999;background:white;border-radius:4px;cursor:pointer;font-size:13px\">Clear</button>\n  </div>\n  <div style=\"display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px\">\n    <span style=\"color:#666\">Elapsed:</span>            <strong id=\"dr_time\">— (press Mark start)</strong>\n    <span style=\"color:#666\">Heading drift:</span>      <strong id=\"dr_head\" style=\"color:#d32f2f\">—</strong>\n    <span style=\"color:#666\">Drift rate:</span>         <strong id=\"dr_rate\" style=\"color:#d32f2f\">—</strong>\n    <span style=\"color:#666\">Distance from start:</span><strong id=\"dr_dist\" style=\"color:#1976d2\">—</strong>\n    <div style=\"grid-column:1/-1;border-top:1px solid #eee;margin-top:6px;padding-top:6px;color:#999;font-size:12px\">Live (full pipeline):</div>\n    <span style=\"color:#999\">Current heading:</span>   <span id=\"dr_curh\">—</span>\n    <span style=\"color:#999\">Current position:</span>  <span id=\"dr_curp\">—</span>\n  </div>\n</div>\n<script>\n(function(scope){\n  var s = { started: false, startMs: 0, sh: 0, sx: 0, sy: 0, ch: 0, cx: 0, cy: 0 };\n  function wrap180(d) { while (d > 180) d -= 360; while (d < -180) d += 360; return d; }\n  function pad(n) { return n < 10 ? '0' + n : '' + n; }\n  function refresh() {\n    var elTime = document.getElementById('dr_time');\n    var elH = document.getElementById('dr_head');\n    var elR = document.getElementById('dr_rate');\n    var elD = document.getElementById('dr_dist');\n    var elCH = document.getElementById('dr_curh');\n    var elCP = document.getElementById('dr_curp');\n    if (!elTime) return;   // template not yet in DOM\n    if (elCH) elCH.textContent = s.ch.toFixed(1) + '°';\n    if (elCP) elCP.textContent = '(' + s.cx.toFixed(2) + ', ' + s.cy.toFixed(2) + ') m';\n    if (!s.started) {\n      elTime.textContent = '— (press Mark start)';\n      elH.textContent = '—'; elR.textContent = '—'; elD.textContent = '—';\n      return;\n    }\n    var et = (Date.now() - s.startMs) / 1000;\n    var mm = Math.floor(et / 60), ss = Math.floor(et % 60);\n    elTime.textContent = mm + ':' + pad(ss);\n    var hd = wrap180(s.ch - s.sh);\n    elH.textContent = hd.toFixed(1) + '°';\n    elR.textContent = (et > 5) ? (hd / et * 60).toFixed(2) + ' °/min' : 'wait 5s...';\n    var dx = s.cx - s.sx, dy = s.cy - s.sy;\n    elD.textContent = Math.sqrt(dx*dx + dy*dy).toFixed(2) + ' m';\n  }\n  window._driftMarkStart = function() {\n    s.started = true; s.startMs = Date.now();\n    s.sh = s.ch; s.sx = s.cx; s.sy = s.cy;\n    refresh();\n  };\n  window._driftClear = function() { s.started = false; refresh(); };\n  scope.$watch('msg.payload', function(p) {\n    if (!p) return;\n    if (typeof p.heading_deg === 'number') s.ch = p.heading_deg;\n    if (typeof p.x === 'number') s.cx = p.x;\n    if (typeof p.y === 'number') s.cy = p.y;\n    refresh();\n  });\n  setInterval(refresh, 1000);   // dam bao elapsed time tick deu 1Hz\n  refresh();\n})(scope);\n</script>",
+    "storeOutMessages": true,
+    "fwdInMessages": true,
+    "resendOnRefresh": false,
+    "templateScope": "local",
+    "x": 540,
+    "y": 200,
+    "wires": [[]]
   },
   {
     "id": "ui_compass",

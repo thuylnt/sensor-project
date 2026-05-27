@@ -1,0 +1,716 @@
+so sánh toán học/thuật toán tính bias-scale. Để mình so sánh side-by-side.
+
+  Hai công thức tính toán
+
+  Teacher (calcOffsets của MPU6050_light) — 1 vị trí
+
+  Giả định: thiết bị nằm yên trên mặt phẳng, Z hướng lên.
+
+  Lấy N mẫu, tính trung bình mỗi trục:
+     mean_ax, mean_ay, mean_az
+     mean_gx, mean_gy, mean_gz
+
+  bias_ax  = mean_ax           ← khi yên, đúng phải = 0
+  bias_ay  = mean_ay           ← khi yên, đúng phải = 0
+  bias_az  = mean_az - g       ← khi yên Z up, đúng phải = +g
+  bias_gx  = mean_gx           ← khi yên, đúng phải = 0
+  bias_gy  = mean_gy
+  bias_gz  = mean_gz
+
+  scale_x  = 1.0  (không tính)
+  scale_y  = 1.0
+  scale_z  = 1.0
+
+  → 6 con số bias, scale luôn = 1.
+
+  Mine (6-face) — 6 vị trí
+
+  Tại mỗi cặp mặt đối xứng, lấy mean rồi cộng/trừ:
+
+  +X up : mean_+X = bias_ax + g*scale_ax
+  -X up : mean_-X = bias_ax - g*scale_ax
+  +Y up : mean_+Y = bias_ay + g*scale_ay
+  -Y up : mean_-Y = bias_ay - g*scale_ay
+  +Z up : mean_+Z = bias_az + g*scale_az
+  -Z up : mean_-Z = bias_az - g*scale_az
+
+  → giải hệ:
+  bias_ax  = (mean_+X + mean_-X) / 2     ← gravity triệt tiêu
+  bias_ay  = (mean_+Y + mean_-Y) / 2
+  bias_az  = (mean_+Z + mean_-Z) / 2
+  scale_ax = g / ((mean_+X - mean_-X) / 2)
+  scale_ay = g / ((mean_+Y - mean_-Y) / 2)
+  scale_az = g / ((mean_+Z - mean_-Z) / 2)
+
+  gyro_bias = trung bình trên TẤT CẢ 6 mặt
+
+  → 9 con số (3 bias + 3 scale + 3 gyro_bias).
+
+  So sánh ưu/nhược
+
+  ┌─────────────────────────────────────────┬───────────────────────────────┬───────────────────────────────────┐
+  │                Tiêu chí                 │            Teacher            │           Mine (6-face)           │
+  ├─────────────────────────────────────────┼───────────────────────────────┼───────────────────────────────────┤
+  │ Số đo cần                               │ 1 vị trí, ~3 giây             │ 6 vị trí, ~30 giây + thao tác lật │
+  ├─────────────────────────────────────────┼───────────────────────────────┼───────────────────────────────────┤
+  │ Output                                  │ 6 bias                        │ 6 bias + 3 scale                  │
+  ├─────────────────────────────────────────┼───────────────────────────────┼───────────────────────────────────┤
+  │ Phụ thuộc tư thế khi calib              │ Rất cao — Z phải up chính xác │ Thấp — đối xứng triệt tiêu        │
+  ├─────────────────────────────────────────┼───────────────────────────────┼───────────────────────────────────┤
+  │ Nguy cơ user thao tác sai               │ Thấp — đặt phẳng là xong      │ Cao — dễ nhầm hướng +X / -X       │
+  ├─────────────────────────────────────────┼───────────────────────────────┼───────────────────────────────────┤
+  │ Sửa được scale chip                     │ ❌                            │ ✅                                │
+  ├─────────────────────────────────────────┼───────────────────────────────┼───────────────────────────────────┤
+  │ Code phức tạp                           │ ~20 dòng                      │ ~80 dòng                          │
+  ├─────────────────────────────────────────┼───────────────────────────────┼───────────────────────────────────┤
+  │ Calib bị sai khi user nghiêng 1° lúc đo │ Sai vĩnh viễn ~0.17 m/s² bias │ Không ảnh hưởng (triệt tiêu)      │
+  └─────────────────────────────────────────┴───────────────────────────────┴───────────────────────────────────┘
+
+  Khi nào cách nào tốt hơn — phân tích thực tế
+
+  Trường hợp Teacher's calc tốt hơn:
+
+  1. MPU6050 factory-trimmed tốt — chip MPU6050 thường có scale error rất nhỏ (~1-2%), bỏ qua được.
+  2. User không thạo lật chip đúng trục — sinh viên dễ lật nhầm +X up thành +Y up → scale calc ra trị phi lý.
+  3. Cần calib nhanh, không cần độ chính xác cao.
+  4. Chỉ dùng heading + step detect (như project mình) — quan trọng nhất là gyro bias, không phải accel scale.
+
+  Trường hợp Mine tốt hơn:
+
+  1. Cần đo gia tốc tuyệt đối chính xác (đo lực G, đo dao động cộng hưởng, đo nghiêng theo độ chính xác cao).
+  2. Chip MPU6050 cụ thể bị scale error lớn (hiếm, nhưng có).
+  3. User được hướng dẫn kỹ + có thời gian — môi trường lab.
+  4. Khó đặt chip phẳng (vd gắn cố định trên xe đã nghiêng) → cần loại bỏ phụ thuộc tư thế.
+
+  Verdict trung thực cho project này
+
+  Cho ESP32 + MPU6050 + PDR/HAR + sinh viên USTH → Teacher's calc khả năng cao là LỰA CHỌN TỐT HƠN, vì:
+
+  1. Dominant error là gyro bias drift theo thời gian (chip nóng dần lên → bias thay đổi). One-shot calib nào cũng bị ảnh hưởng. Bù lại bằng gyro bias EMA dynamic update khi STAND — quan
+  trọng hơn nhiều cả 2 phương pháp.
+  2. Step detector dùng accel norm linear (gravity đã tách ra qua HPF), không cần scale chính xác → bias là đủ.
+  3. Lật 6 mặt dễ sai cho sinh viên → mất công + risk có 1 mặt sai → calib tệ hơn cả không calib.
+  4. MPU6050 thường có factory trim → scale error nhỏ → cải thiện không đáng kể.
+
+  Đề xuất thực tế
+
+  Cho project của bạn, mình khuyên dùng Teacher's approach (đã sẵn trong calibration::stationaryCalib()) cho:
+  - Calib hàng ngày trước khi test
+  - Demo nhanh
+  - Sau khi chip đã ấm 2-3 phút
+
+  Giữ 6-face calc chỉ dùng khi:
+  - Muốn so sánh để báo cáo "method comparison"
+  - Phát hiện chip cụ thể bị scale error rõ rệt
+
+  Đoạn này có thể thành 1 mục hay trong báo cáo: "Calibration method comparison — 1-pose vs 6-pose" với chart drift theo thời gian cho từng cách. Bonus point cho phần "tự đánh giá phương
+  pháp".
+
+  Tóm tắt câu trả lời
+
+  ▎ Code tính toán của thầy có ưu điểm hơn không?
+
+  Có, trong 2 khía cạnh quan trọng cho project này:
+  1. Đơn giản hơn → ít lỗi do user
+  2. Không phụ thuộc thao tác lật đúng trục → robust hơn cho người mới
+
+  Kém ở 1 khía cạnh:
+  - Không sửa được scale (nhưng MPU6050 không cần)
+
+  → Cho MPU6050 trong PDR/HAR, teacher's calc là "đủ tốt và ít sai sót". 6-face calc theoretical-thorough nhưng overkill và tăng risk lỗi user.
+  
+  --------------------------
+  
+    Teacher-style calibration ✅
+
+  - calibration.h/cpp — thêm stationaryCalib(n=1000) (giả định Z up, lấy mean = bias, scale=1.0)
+  - config.h — flag CALIB_METHOD
+  - main.cpp setup → dispatch theo CALIB_METHOD khi NVS trống
+
+  Cách switch giữa calibration methods
+
+  Mở firmware/src/config.h, đổi 1 số:
+  #define CALIB_METHOD 1     // 0/1/2
+
+  ┌─────────┬────────────────────────────────────────────────────────┐
+  │ Giá trị │                 Hành vi khi NVS trống                  │
+  ├─────────┼────────────────────────────────────────────────────────┤
+  │ 0       │ Manual mode — chờ bạn hard-code vào main.cpp           │
+  ├─────────┼────────────────────────────────────────────────────────┤
+  │ 1       │ Teacher-style — tự chạy stationaryCalib() khi boot     │
+  ├─────────┼────────────────────────────────────────────────────────┤
+  │ 2       │ Skip — dùng default bias=0 scale=1 (không khuyên dùng) │
+  └─────────┴────────────────────────────────────────────────────────┘
+
+  Quy trình so sánh 2 cách calib
+
+  # So sanh cach Python 6-face:
+  # 1. Set CALIB_METHOD = 0
+  # 2. mosquitto_pub -t usth/pdr/cmd/calib_clear -m ""
+  # 3. python calibrate_mpu.py --out calib.json
+  # 4. Hard-code 9 so vao main.cpp + flash
+  # 5. Quan sat dashboard, do drift sau 5 phut
+
+  # So sanh cach Teacher stationary:
+  # 1. mosquitto_pub -t usth/pdr/cmd/calib_clear -m ""
+  # 2. Set CALIB_METHOD = 1 + flash
+  # 3. ESP32 boot -> tu chay stationary calib
+  # 4. Quan sat dashboard, do drift sau 5 phut
+
+  # So sanh:
+  # - Drift heading sau 5p (do bang compass trong dashboard)
+  # - Stand position stability (de yen 30s, xem position di chuyen bao xa)
+  # - Closure error sau di vong hinh chu nhat
+
+  Kết quả mong đợi sau khi flash
+
+  Khi MILESTONE_LEVEL = 3 + heuristic fix:
+  - Đứng yên → heuristic phát hiện STAND (variance thấp) → step counter không đếm → trajectory không trôi
+  - Đi → STAND/WALK chuyển đổi đúng → gyro bias EMA update khi đứng → drift heading giảm
+  - Trên dashboard → 3 đường:
+    - 🔴 Raw: drift nhanh nhất (gyro chưa trừ bias)
+    - 🟠 Calib: drift trung bình (bias static)
+    - 🟢 Full: drift ít nhất (bias EMA dynamic + ZUPT)
+	
+	
+	------------------------
+  [CAL] loaded from NVS                       ← phai co dong nay
+  [CAL] acc_bias  = [0.12 -0.08 0.21] m/s^2   ← so nho, hop ly
+  [CAL] acc_scale = [1.003 0.998 1.011]       ← gan 1.0
+  [CAL] gyro_bias = [-0.002 0.003 -0.001]     ← gan 0
+  Nếu không OK → chưa nạp calib, hard-code lại theo calib.json.
+  
+  Đây là bảng giá trị tham khảo cho MPU6050 thường (GY-521):
+  
+  acc_bias (đơn vị m/s²)
+
+  Đại diện cho offset gia tốc mà chip đo được khi thực sự không có gia tốc.
+
+  ┌──────────────┬────────────────────────────────────┬───────────────────────────────────────────────────┐
+  │    Khoảng    │              Ý nghĩa               │                     Hành động                     │
+  ├──────────────┼────────────────────────────────────┼───────────────────────────────────────────────────┤
+  │ [-0.2, +0.2] │ Tốt — chip được trim tốt           │ OK, dùng được                                     │
+  ├──────────────┼────────────────────────────────────┼───────────────────────────────────────────────────┤
+  │ [-0.5, +0.5] │ Bình thường — phổ biến với MPU6050 │ OK                                                │
+  ├──────────────┼────────────────────────────────────┼───────────────────────────────────────────────────┤
+  │ [-1.0, +1.0] │ Hơi cao                            │ Chấp nhận được, có thể re-calib khi rảnh          │
+  ├──────────────┼────────────────────────────────────┼───────────────────────────────────────────────────┤
+  │ > ±1.0       │ Đáng nghi                          │ Re-calib; có thể chip nghiêng khi đo              │
+  ├──────────────┼────────────────────────────────────┼───────────────────────────────────────────────────┤
+  │ > ±2.0       │ Sai                                │ Calib failed — kiểm tra wiring / chip orientation │
+  └──────────────┴────────────────────────────────────┴───────────────────────────────────────────────────┘
+
+  Datasheet MPU6050: zero-g offset spec là ±80 mg = ±0.785 m/s². Sau calib tốt, bias residual nên dưới 0.5 m/s².
+
+  Ví dụ "đẹp":
+  acc_bias = [0.123, -0.087, 0.214]
+
+  Ví dụ "đáng nghi":
+  acc_bias = [-1.234, 0.087, 2.456]   # az quá lớn → chip không phẳng khi calib
+
+  acc_scale (đơn vị: không có, là factor nhân)
+
+  Đại diện cho sai số đo gia tốc của chip. Lý tưởng = 1.0.
+
+  ┌──────────────────────┬────────────────────────────────────┬─────────────────────────────────────────┐
+  │        Khoảng        │              Ý nghĩa               │                Hành động                │
+  ├──────────────────────┼────────────────────────────────────┼─────────────────────────────────────────┤
+  │ [0.98, 1.02]         │ Rất tốt                            │ OK, chip factory trim chuẩn             │
+  ├──────────────────────┼────────────────────────────────────┼─────────────────────────────────────────┤
+  │ [0.95, 1.05]         │ Bình thường — phổ biến với MPU6050 │ OK                                      │
+  ├──────────────────────┼────────────────────────────────────┼─────────────────────────────────────────┤
+  │ [0.90, 1.10]         │ Hơi xấu                            │ Chấp nhận được cho HAR/step count       │
+  ├──────────────────────┼────────────────────────────────────┼─────────────────────────────────────────┤
+  │ [0.80, 1.20]         │ Đáng nghi                          │ Re-calib                                │
+  ├──────────────────────┼────────────────────────────────────┼─────────────────────────────────────────┤
+  │ > ±20% (vd 1.5, 0.7) │ Sai                                │ Calib failed — lật nhầm trục lúc 6-face │
+  └──────────────────────┴────────────────────────────────────┴─────────────────────────────────────────┘
+
+  Datasheet: sensitivity tolerance ±2-3%, nên scale thực phải trong [0.97, 1.03] về mặt vật lý. Nếu bạn thấy 1.5 hay 0.6 → 100% là user error khi 6-face.
+
+  Ví dụ "đẹp":
+  acc_scale = [1.003, 0.998, 1.011]
+
+  Ví dụ "sai do lật nhầm trục":
+  acc_scale = [1.523, 0.642, 0.987]
+  # +X và -X face không phải pair → công thức ra giá trị phi lý
+
+  Note: Teacher's calibration luôn cho [1.0, 1.0, 1.0] vì không tính scale.
+
+  gyro_bias (đơn vị rad/s)
+
+  Đại diện cho drift gyro khi đứng yên — đáng quan tâm nhất cho heading drift.
+
+  ┌────────────────┬───────────────────┬─────────────┬───────────────────────────────────────┐
+  │ Khoảng (rad/s) │ Tương đương (°/s) │   Ý nghĩa   │               Hành động               │
+  ├────────────────┼───────────────────┼─────────────┼───────────────────────────────────────┤
+  │ < ±0.005       │ < ±0.29 °/s       │ Xuất sắc    │ OK, drift heading ~17°/phút trở xuống │
+  ├────────────────┼───────────────────┼─────────────┼───────────────────────────────────────┤
+  │ < ±0.02        │ < ±1.15 °/s       │ Tốt         │ OK, drift ~70°/phút                   │
+  ├────────────────┼───────────────────┼─────────────┼───────────────────────────────────────┤
+  │ < ±0.05        │ < ±2.9 °/s        │ Bình thường │ OK cho demo                           │
+  ├────────────────┼───────────────────┼─────────────┼───────────────────────────────────────┤
+  │ [±0.05, ±0.1]  │ 2.9–5.7 °/s       │ Hơi cao     │ Cân nhắc re-calib                     │
+  ├────────────────┼───────────────────┼─────────────┼───────────────────────────────────────┤
+  │ > ±0.1         │ > 5.7 °/s         │ Đáng nghi   │ Re-calib; có thể cầm tay khi đo       │
+  ├────────────────┼───────────────────┼─────────────┼───────────────────────────────────────┤
+  │ > ±0.5         │ > 28 °/s          │ Sai         │ Calib failed                          │
+  └────────────────┴───────────────────┴─────────────┴───────────────────────────────────────┘
+
+  Datasheet: zero-rate output spec ±20 °/s = ±0.349 rad/s. Sau calib, residual thường < 0.02 rad/s. Một số chip "lemon" có residual ~0.05 rad/s là bình thường, không phải chip hỏng.
+
+  Ví dụ "đẹp":
+  gyro_bias = [-0.002134, 0.003421, -0.001523]   ≈ -0.12°, +0.20°, -0.09° per second
+
+  Ví dụ "đáng nghi":
+  gyro_bias = [0.0014, -0.0023, 0.2453]
+  # gz quá lớn → chip bị quay khi calib, hoặc chip này có gz lemon
+
+  Bảng tổng hợp "cheat sheet"
+
+  In ra serial sau khi calib, bạn nên thấy đại loại như sau:
+
+  [CAL] acc_bias  = [+0.123 -0.087 +0.214] m/s^2     ← |.| < 0.5
+  [CAL] acc_scale = [+1.003 +0.998 +1.011]           ← gần 1.0
+  [CAL] gyro_bias = [-0.002134 +0.003421 -0.001523]  ← |.| < 0.02
+
+  Nếu output của bạn trông như:
+
+  [CAL] acc_bias  = [-1.234 +0.087 +2.456] m/s^2     ← bias az quá lớn
+  [CAL] acc_scale = [+1.523 +0.642 +0.987]           ← scale phi lý
+  [CAL] gyro_bias = [+0.045 -0.078 +0.231]           ← gyro lớn
+
+  → Có vấn đề. Re-calib, chú ý:
+  - ESP32 đặt phẳng tuyệt đối (kê thẳng băng dính lên bàn nếu cần)
+  - Không cầm tay lúc đo
+  - Nếu 6-face, xác nhận đúng trục từ silkscreen trước khi lật
+  - Chip ấm 3-5 phút trước khi calib
+  
+  --------------------------
+  
+    
+  "Sao phải 5 phút?"
+
+  3 lý do, có thể điều chỉnh tùy bối cảnh:
+  
+  1. MPU6050 ổn định nhiệt độ sau ~3-5 phút
+
+  Gyro bias drift theo nhiệt độ chip. Vừa cấp nguồn, chip lạnh → bias là X. Sau 3-5 phút chip ấm (vì IC dissipate ~3-5 mW) → bias dịch tới Y. Y mới là bias "thật" lúc dùng. Calib quá sớm→
+   đo trúng X → vô tác dụng cho lúc thực sự dùng.
+
+  2. Drift cần đủ thời gian để "lộ ra"
+
+  Bias residual sau calib điển hình ~0.001-0.005 rad/s = 0.057-0.286°/s drift.
+  - Sau 1 phút: drift 3-17° → khó phân biệt với noise
+  - Sau 5 phút: drift 17-86° → rõ ràng, phân biệt được method tốt/kém
+  - Sau 15 phút: drift 50-260° → quá đủ, nhưng tedious
+
+  → 5 phút là sweet spot giữa precision và practicality.
+
+  3. Distance walked đủ ý nghĩa
+
+  Đi @ 110 step/min × 5 phút = 550 step × 0.7m/step ≈ 385m. Closure error ở khoảng cách này đủ lớn để đo (~vài chục cm tới vài m).
+
+  → Có thể rút xuống 2-3 phút nếu rush, hoặc dài tới 10 phút nếu muốn dữ liệu sạch hơn.
+
+  "Đo drift thế nào (không phải bằng mắt)"
+
+  Có 3 cấp độ — chọn theo độ chính xác bạn cần.
+
+  Cấp 1 — Đọc số từ dashboard (rough)
+
+  Trên Node-RED dashboard hiện đã có:
+  - Compass widget hiện heading_deg real-time
+  - Step counter widget hiện position thông qua step count
+  - Stats widget hiện trạng thái
+
+  Static drift test (đứng yên):
+  1. Đặt ESP32 trên bàn phẳng, không động vào 5 phút.
+  2. Ghi heading_deg lúc bắt đầu (vd 245°)
+  3. 5 phút sau ghi lại (vd 263°)
+  4. Drift = 263 - 245 = 18° / 5 min = 3.6°/phút
+
+  Walking closure test:
+  1. Bấm "Reset quỹ đạo" → trajectory về (0,0)
+  2. Đi vòng hình chữ nhật, về đúng điểm xuất phát
+  3. Đọc (x, y) cuối trên dashboard (qua hover hoặc OLED)
+  4. Distance = sqrt(x² + y²) = closure error
+
+  Cấp 2 — Log file rồi tính (chính xác hơn)
+
+  Dùng mosquitto_sub ghi log:
+
+  # PowerShell: log pose vao file 5 phut
+  mosquitto_sub -h localhost -t 'usth/pdr/dev01/pose' -v -W 300 > drift_test_A.log
+
+  Sau 5 phút, file có dạng:
+  usth/pdr/dev01/pose {"ts":1735300000123,"x":0.0,"y":0.0,"heading_deg":0.5}
+  usth/pdr/dev01/pose {"ts":1735300001124,"x":0.0,"y":0.0,"heading_deg":1.1}
+  ...
+  usth/pdr/dev01/pose {"ts":1735300300123,"x":0.2,"y":-0.1,"heading_deg":18.3}
+
+  Parse đơn giản trong Python:
+
+  import json, re
+  lines = open('drift_test_A.log').readlines()
+  poses = []
+  for line in lines:
+      m = re.search(r'\{[^}]+\}', line)
+      if m: poses.append(json.loads(m.group()))
+  print(f"Total samples: {len(poses)}")
+  print(f"Initial: heading={poses[0]['heading_deg']:.1f}°  pos=({poses[0]['x']:.2f},{poses[0]['y']:.2f})")
+  print(f"Final:   heading={poses[-1]['heading_deg']:.1f}°  pos=({poses[-1]['x']:.2f},{poses[-1]['y']:.2f})")
+  heading_drift = poses[-1]['heading_deg'] - poses[0]['heading_deg']
+  position_drift = (poses[-1]['x']**2 + poses[-1]['y']**2)**0.5
+  duration = (poses[-1]['ts'] - poses[0]['ts']) / 1000.0
+  print(f"\nDrift: heading={heading_drift:.1f}° ({heading_drift/duration*60:.2f}°/min)")
+  print(f"       position={position_drift:.2f}m in {duration:.0f}s")
+
+  → Số liệu định lượng để so sánh 2 method.
+
+  Cấp 3 — Query InfluxDB (chính xác nhất, đẹp cho báo cáo)
+
+  Vì stack có sẵn InfluxDB, mọi pose đều được Telegraf ghi vào đó. Vào http://localhost:8086 → Data Explorer:
+
+  // Static drift trong 5 phut gan day
+  from(bucket: "pdr")
+    |> range(start: -5m)
+    |> filter(fn: (r) => r._measurement == "pose" and r._field == "heading_deg")
+    |> first()                 // hoac last()
+
+  // Hoac dung difference function:
+  from(bucket: "pdr")
+    |> range(start: -5m)
+    |> filter(fn: (r) => r._measurement == "pose" and r._field == "heading_deg")
+    |> reduce(
+         fn: (r, accumulator) => ({
+           start_val: if accumulator.count == 0 then r._value else accumulator.start_val,
+           end_val: r._value,
+           count: accumulator.count + 1
+         }),
+         identity: {start_val: 0.0, end_val: 0.0, count: 0}
+       )
+
+  Hoặc dùng Grafana panel với 2 stat box:
+  - Heading at start = first value 5min ago
+  - Heading now = last value
+  - Drift = end - start (computed in query)
+
+  Đề xuất quy trình so sánh 2 method
+
+  1. Flash với CALIB_METHOD = 1 (teacher)
+  Đề xuất quy trình so sánh 2 method
+
+  1. Flash với CALIB_METHOD = 1 (teacher)
+  2. Boot, ESP32 tự calib stationary (chip vẫn lạnh)
+  3. Để 3 phút cho chip ấm
+  4. mosquitto_sub > drift_teacher.log -W 300   (5 phút, đứng yên)
+  5. mosquitto_pub /reset
+  6. Đi vòng hình chữ nhật 10×5m × 3 vòng → ghi closure
+  7. mosquitto_pub /calib_clear
+  8. Flash với CALIB_METHOD = 0 + hard-code 9 số từ 6-face Python
+  9. Lặp lại bước 3-6 với log riêng drift_6face.log
+  10. Compare 2 file bằng Python script trên
+
+  Kết quả sẽ có dạng:
+                    Teacher    6-face
+  Heading drift     18.3°      14.7°
+  Drift rate        3.66°/min  2.94°/min
+  Closure error     1.45 m     1.12 m
+
+  Số liệu này đẹp cho báo cáo, định lượng được chứ không phải "nhìn dashboard thấy đường nào ít trôi hơn".
+
+  Có cần widget "Drift" trên dashboard không?
+
+  Mình có thể thêm 1 widget nhỏ trong group Stats:
+  - Nút "Mark start" → capture heading + position hiện tại
+  - Hiển thị liên tục:
+    - Heading drift: 12.4° (1.45°/min)
+    - Distance from start: 0.32 m
+
+  Sẽ tiện đo drift real-time mà không cần Python.
+
+  Bạn có muốn mình thêm không? ~30 dòng JS + 1 button, không phức tạp.
+  ------------------
+   Widget Drift làm gì
+
+  Trong group Drift test (6 cột) bạn sẽ thấy:
+
+  ┌─────────────────────────────────────────────────┐
+  │  [Mark start]  [Clear]                          │
+  │                                                 │
+  │  Elapsed:             5:23                      │
+  │  Heading drift:       +12.4°    ← màu đỏ        │
+  │  Drift rate:          +2.31 °/min               │
+  │  Distance from start: 0.34 m    ← màu xanh      │
+  │  ─────────────────────────────                  │
+  │  Live (full pipeline):                          │
+  │  Current heading:     247.5°                    │
+  │  Current position:    (0.34, -0.12) m           │
+  └─────────────────────────────────────────────────┘
+
+  Cách dùng cho test drift
+
+  Static drift test (đứng yên):
+  1. Đặt ESP32 trên bàn phẳng, không động vào
+  2. Đợi Live heading ổn định (vài giây sau boot)
+  3. Bấm Mark start → 4 ô trên zero
+  4. Đứng quan sát 5 phút (hoặc lâu hơn)
+  5. Đọc số Heading drift và Drift rate cuối
+
+  Walking closure test:
+  1. Bấm Mark start trước khi bắt đầu đi
+  2. Đi 1 vòng theo lộ trình kín (vd hình vuông 5×5m × 3 lần)
+  3. Về đúng điểm xuất phát
+  4. Đọc Distance from start — đó là closure error
+
+  Compare 2 calib methods:
+  1. Flash với method A → đợi 3 phút (chip ấm) → bấm Mark start → đợi 5 phút → ghi số
+  2. Flash với method B → lặp lại → ghi số
+  3. Có 2 hàng số định lượng để báo cáo
+
+  Chi tiết kỹ thuật
+
+  - Heading drift wrap về [-180°, +180°] (nếu đi qua mốc 360° vẫn ra số có nghĩa)
+  - Drift rate chỉ hiện sau 5 giây đầu (tránh chia cho 0)
+  - Refresh 1 Hz qua setInterval — elapsed time vẫn tick dù không có message MQTT mới
+  - Dữ liệu lấy từ full pipeline (fn_pose_full → ui_drift). Nếu muốn so sánh drift của 3 path đồng thời, cần widget version mở rộng. Hiện tại 1 widget cho full đủ để đo so sánh 2 phương
+  pháp calib.
+
+  Quy trình so sánh calib định lượng
+
+  Sau khi flash + đợi chip ấm:
+
+  Method 1 (Teacher stationary):
+    Static 5 min:    drift = ?°    rate = ? °/min
+    Walking 50m:     closure = ? m
+
+  Method 2 (6-face Python):
+    Static 5 min:    drift = ?°    rate = ? °/min
+    Walking 50m:     closure = ? m
+
+  Số liệu đẹp cho bảng so sánh trong báo cáo.
+  
+  ===========================
+  
+  Đây là giải thích chi tiết từng thông số, cách diễn giải, và những giá trị "kỳ vọng" cho từng kịch bản test.
+  
+  Bảng tổng quan
+
+  ┌─────────────────────┬───────────┬───────────────────────────────────────┬────────────────────────────────────────────────┐
+  │      Thông số       │  Đơn vị   │              Lấy từ đâu               │                 Mục đích chính                 │
+  ├─────────────────────┼───────────┼───────────────────────────────────────┼────────────────────────────────────────────────┤
+  │ Elapsed             │ mm:ss     │ Date.now() - startMs                  │ Đồng hồ tham chiếu cho mọi thứ khác            │
+  ├─────────────────────┼───────────┼───────────────────────────────────────┼────────────────────────────────────────────────┤
+  │ Heading drift       │ ° (độ)    │ wrap(current_heading - start_heading) │ Tổng drift heading từ lúc Mark start           │
+  ├─────────────────────┼───────────┼───────────────────────────────────────┼────────────────────────────────────────────────┤
+  │ Drift rate          │ °/phút    │ heading_drift / elapsed × 60          │ KPI chính để so sánh calib method              │
+  ├─────────────────────┼───────────┼───────────────────────────────────────┼────────────────────────────────────────────────┤
+  │ Distance from start │ m         │ √((x-x₀)² + (y-y₀)²)                  │ Closure error / vị trí trôi xa start bao nhiêu │
+  ├─────────────────────┼───────────┼───────────────────────────────────────┼────────────────────────────────────────────────┤
+  │ Current heading     │ ° (0–360) │ Trực tiếp từ MQTT pose.heading_deg    │ Live monitor — verify data đang chảy           │
+  ├─────────────────────┼───────────┼───────────────────────────────────────┼────────────────────────────────────────────────┤
+  │ Current position    │ (x, y) m  │ Trực tiếp từ MQTT pose.x, pose.y      │ Live monitor                                   │
+  └─────────────────────┴───────────┴───────────────────────────────────────┴────────────────────────────────────────────────┘
+
+  ---
+  1. Elapsed (mm:ss)
+
+  Là gì: Thời gian đã trôi từ lúc bạn bấm Mark start.
+
+  Tại sao quan trọng: Mọi drift đều tỷ lệ với thời gian. Không có elapsed thì không tính được rate.
+
+  Format: 5:23 = 5 phút 23 giây.
+
+  Cập nhật: Mỗi giây, ngay cả khi không có MQTT message mới (qua setInterval(1000)).
+
+  Không có ý nghĩa độc lập — chỉ là baseline cho các số khác.
+
+  ---
+  2. Heading drift (°)
+
+  Công thức:
+  drift = wrap180(current_heading - start_heading)
+
+  wrap180 đẩy kết quả về [-180°, +180°]. Vì sao? Ví dụ:
+  - Heading lúc Mark start = 358°
+  - Heading hiện tại = 2°
+  - Nếu trừ thô: 2° - 358° = -356° → vô nghĩa (không phải bạn quay -356°)
+  - Wrap: -356° → +4° → đúng (bạn quay phải 4°)
+
+  Ý nghĩa dấu:
+  - Dương (+): heading tăng → chip quay theo chiều gyro Z dương (theo MPU6050, đó là counter-clockwise nhìn từ trên xuống, tương đương "quay trái" trong hệ compass)
+  - Âm (-): heading giảm → chip quay theo gyro Z âm
+
+  Static test (chip không động):
+  - Drift > 0 → gyro Z bias dương (chip "tưởng" mình đang quay trái khi nó đứng yên)
+  - Drift < 0 → gyro Z bias âm
+  - Sign tell you direction of residual bias
+
+  Kỳ vọng theo kịch bản:
+
+  ┌───────────────────────────────────────┬────────────────────────────┐
+  │               Kịch bản                │    Mong đợi sau 5 phút     │
+  ├───────────────────────────────────────┼────────────────────────────┤
+  │ Đứng yên, calib tốt                   │ ±5 đến ±20°                │
+  ├───────────────────────────────────────┼────────────────────────────┤
+  │ Đứng yên, calib trung bình            │ ±20 đến ±60°               │
+  ├───────────────────────────────────────┼────────────────────────────┤
+  │ Đứng yên, calib tệ / EMA không update │ >100°                      │
+  ├───────────────────────────────────────┼────────────────────────────┤
+  │ Đi vòng kín 5 phút về điểm đầu        │ 0° lý tưởng, thực tế 5-30° │
+  └───────────────────────────────────────┴────────────────────────────┘
+
+  ---
+  3. Drift rate (°/phút) — METRIC CHÍNH
+
+  Công thức:
+  rate = heading_drift / elapsed_seconds × 60
+
+  Tại sao chia cho thời gian: Để chuẩn hóa giữa các test khác nhau. Nếu bạn đo 3 phút vs 10 phút thì drift tuyệt đối khác nhau, nhưng rate so sánh được công bằng.
+
+  "wait 5s...": Trong 5 giây đầu, chia drift cho elapsed nhỏ → noise bị khuếch đại → số nhảy loạn. Bỏ qua đến khi elapsed > 5s.
+
+  Bằng số rate ≈ gyro Z bias residual của bạn:
+  rate (°/phút) ÷ 60 = ° / giây ÷ 57.3 = rad/giây = bias residual
+
+  Ví dụ: rate = 3°/phút → bias = 0.05°/s = 0.00087 rad/s. Tốt.
+
+  Bảng đánh giá:
+
+  ┌────────────────┬───────────────────────────┬──────────────────────────────────────────────────┐
+  │   Drift rate   │ Tương đương bias residual │                     Đánh giá                     │
+  ├────────────────┼───────────────────────────┼──────────────────────────────────────────────────┤
+  │ < 1 °/phút     │ < 0.0003 rad/s            │ Xuất sắc — EMA dynamic update đang hoạt động tốt │
+  ├────────────────┼───────────────────────────┼──────────────────────────────────────────────────┤
+  │ 1 – 5 °/phút   │ 0.0003 – 0.0015 rad/s     │ Tốt — kỳ vọng sau calib + chip ấm                │
+  ├────────────────┼───────────────────────────┼──────────────────────────────────────────────────┤
+  │ 5 – 15 °/phút  │ 0.0015 – 0.005 rad/s      │ Bình thường — chip MPU6050 trung bình            │
+  ├────────────────┼───────────────────────────┼──────────────────────────────────────────────────┤
+  │ 15 – 50 °/phút │ 0.005 – 0.015 rad/s       │ Hơi tệ — chip chưa ấm hoặc calib sơ sài          │
+  ├────────────────┼───────────────────────────┼──────────────────────────────────────────────────┤
+  │ > 50 °/phút    │ > 0.015 rad/s             │ Tệ — calib failed hoặc EMA không update          │
+  └────────────────┴───────────────────────────┴──────────────────────────────────────────────────┘
+
+  Trường hợp đặc biệt khi đi bộ: drift rate không phải chỉ do bias — còn do rung khi bước, mounting không cố định. Số sẽ cao hơn static test 2-5 lần.
+
+  ---
+  4. Distance from start (m)
+
+  Công thức:
+  dx = current_x - start_x
+  dy = current_y - start_y
+  distance = √(dx² + dy²)
+
+  Đây là khoảng cách thẳng từ vị trí hiện tại về vị trí lúc Mark start, không phải tổng quãng đường đi.
+
+  Ý nghĩa theo 2 kịch bản:
+
+  Kịch bản A — Đứng yên (static test)
+
+  Kỳ vọng: Luôn = 0.00 m.
+
+  Nếu tăng: Có 1 trong 2 vấn đề:
+  - Step detector firing trên noise — classifier đang nhận sai (output WALK thay vì STAND), hoặc threshold step quá thấp
+  - Rung động bên ngoài — bàn rung, ai đó đi qua, AC chạy gần đó
+
+  → Cần debug. Trong điều kiện chuẩn (ESP32 yên trên bàn cứng), distance phải đứng yên ở 0.
+
+  Kịch bản B — Đi vòng kín, về điểm đầu
+
+  Distance lúc đó = closure error = thước đo chuẩn của PDR.
+
+  Kỳ vọng:
+  - Đi 50m về điểm đầu → distance 1-3m (2-6% drift)
+  - Đi 100m về → distance 2-8m (2-8%)
+  ▎ 15% → PDR chưa tốt, drift heading nhiều
+
+  ---
+  5. Current heading (°, 0–360)
+
+  Là gì: Heading hiện tại theo compass convention.
+
+  Tại sao có dù không phải số "drift": Để bạn verify dữ liệu đang chảy + có baseline để biết bấm Mark start lúc nào hợp lý.
+
+  Quan sát:
+  - Đứng yên với calib tốt: số gần như đứng yên, chỉ ±0.5° dao động
+  - Đứng yên với calib tệ: số tăng/giảm liên tục → đã thấy được drift trước cả khi Mark start
+  - Đi: số xoay theo hướng bạn quay (compass-like)
+
+  Vì sao 0–360 không wrap về ±180: Compass convention là N=0, E=90, S=180, W=270. Số âm không có ý nghĩa.
+
+  ---
+  6. Current position (x, y) m
+
+  Là gì: Tọa độ hiện tại trong hệ tọa độ tương đối, gốc tại lần /reset gần nhất.
+
+  Quan trọng: KHÔNG phải gốc tại Mark start. Mark start chỉ ghi nhớ snapshot để tính drift. Gốc thực sự là lúc PDR reset (lúc boot hoặc lúc bấm "Reset quỹ đạo").
+
+  Convention:
+  - x tăng → đi về phía Đông (mặc định khi boot, gyro chưa quay)
+  - y tăng → đi về phía Bắc
+
+  Dùng: Verify step detector đang chạy đúng. Đứng yên thì 2 số đứng yên. Đi thì 2 số thay đổi.
+
+  ---
+  So sánh kịch bản test
+
+  Test 1 — Static drift (đứng yên 5 phút)
+
+  Sau 5 phút với calib tốt:
+  Elapsed:             5:00
+  Heading drift:       +8.4°       ← gyro bias đẩy heading lên
+  Drift rate:          +1.68 °/min  ← KPI cho calib (tốt)
+  Distance from start: 0.00 m       ← phải = 0
+  Current heading:     348.4°       (lúc start là 340°)
+  Current position:    (0.00, 0.00) ← đứng yên
+
+  Đánh giá: Tốt. Drift rate ~1.7°/phút là kỳ vọng cho MPU6050 calib đúng.
+
+  Test 2 — Walking square 10×5m × 2 vòng (~60m)
+
+  Trên dashboard, trước khi đi: bấm Mark start, đứng tại điểm A (0,0).
+
+  Đi vòng hình chữ nhật, về đúng điểm A.
+
+  Số dashboard sẽ ra:
+  Elapsed:             0:55          ← đi mất ~1 phút
+  Heading drift:       +4.2°         ← bạn về đúng hướng ban đầu (0° lý tưởng)
+  Drift rate:          +4.58 °/min   ← cao hơn static vì rung khi đi
+  Distance from start: 0.87 m        ← closure error = 0.87m / 60m = 1.5%
+  Current heading:     4.2°          (bắt đầu từ 0°)
+  Current position:    (0.45, -0.74) ← gần (0,0) nhưng không chính xác
+
+  Đánh giá:
+  - Closure 1.5% rất tốt
+  - Drift rate 4.58°/phút cao hơn static nhưng chấp nhận
+
+  ---
+  Cờ đỏ — khi nào có vấn đề
+
+  ┌───────────────────────────────────────────────────┬───────────────────────────────────────┬────────────────────────────────────────────────────────────────┐
+  │                     Quan sát                      │              Nghĩa là gì              │                            Cần làm                             │
+  ├───────────────────────────────────────────────────┼───────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ Static test, Distance from start tăng > 0.5m      │ Step detector đang ăn noise           │ Check classifier có ra STAND không (xem Activity widget)       │
+  ├───────────────────────────────────────────────────┼───────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ Drift rate âm rất lớn (vd -50°/phút) khi đứng yên │ Gyro bias âm lớn → calib chưa đúng    │ Re-calib, chú ý chip không rung                                │
+  ├───────────────────────────────────────────────────┼───────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ Heading drift nhảy đột ngột 180°                  │ Wrap-around lỗi hoặc heading có spike │ Check raw gyro topic, có thể chip bị I2C error                 │
+  ├───────────────────────────────────────────────────┼───────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ Current heading không đổi dù bạn quay chip        │ Sensor dead hoặc mất WiFi             │ Check serial monitor có data không                             │
+  ├───────────────────────────────────────────────────┼───────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ Current position không đổi khi đi                 │ Step detector không kích              │ Check classifier, có thể stuck ở STAND, hoặc threshold quá cao │
+  ├───────────────────────────────────────────────────┼───────────────────────────────────────┼────────────────────────────────────────────────────────────────┤
+  │ 2 lần Mark start liên tiếp ra kết quả rất khác    │ Drift không đều theo thời gian        │ Có thể chip đang warm-up, đợi thêm 5 phút                      │
+  └───────────────────────────────────────────────────┴───────────────────────────────────────┴────────────────────────────────────────────────────────────────┘
+
+  ---
+  Mẹo dùng cho báo cáo
+
+  Bấm Mark start, đợi 5 phút, chụp ảnh widget rồi gắn vào báo cáo. Có số liệu hard-evidence:
+
+  ▎ Test 1: Static drift, MPU6050 sau 5 phút warm-up, calibration teacher-style.
+  ▎ Heading drift = +8.4°, rate = +1.68°/min, no step events.
+  ▎ → Kết luận: bias residual ≈ 0.028°/s, gần với spec datasheet sau calib.
+
+  Đẹp hơn nhiều so với "tôi thấy đường trên dashboard lệch khoảng 1 chút".
