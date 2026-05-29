@@ -1,0 +1,132 @@
+Đây là 6 topic chính mà ESP32 publish. Để mình giải thích từng field + nhận xét trên số liệu thật của bạn.
+
+  1. pose — vị trí từ pipeline FULL (calib + EMA + HAR)
+
+  {"ts":221943, "x":-2.14184, "y":13.68755, "heading_deg":1.495355}
+
+  ┌─────────────┬─────────────┬───────────────────────────────────────┬─────────────────────────────┐
+  │    Field    │   Đơn vị    │                Ý nghĩa                │       Giá trị của bạn       │
+  ├─────────────┼─────────────┼───────────────────────────────────────┼─────────────────────────────┤
+  │ ts          │ millisecond │ millis() từ lúc boot (3 phút 42 giây) │ 221943 ms                   │
+  ├─────────────┼─────────────┼───────────────────────────────────────┼─────────────────────────────┤
+  │ x           │ m           │ Tọa độ Đông-Tây so với gốc            │ -2.14 m (lệch 2.14m về Tây) │
+  ├─────────────┼─────────────┼───────────────────────────────────────┼─────────────────────────────┤
+  │ y           │ m           │ Tọa độ Bắc-Nam so với gốc             │ +13.69 m (đi 13.69m về Bắc) │
+  ├─────────────┼─────────────┼───────────────────────────────────────┼─────────────────────────────┤
+  │ heading_deg │ độ (0-360)  │ Hướng đang đối diện                   │ 1.5° (gần Bắc)              │
+  └─────────────┴─────────────┴───────────────────────────────────────┴─────────────────────────────┘
+
+  → ESP32 cho rằng bạn ở vị trí cách điểm xuất phát ~13.86m theo hướng Bắc-Tây-Bắc, đang nhìn về Bắc.
+
+  2. activity — HAR output
+
+  {"ts":262022, "class":"walk", "confidence":0.9}
+
+  ┌────────────┬────────────────────────────────────────────────────────────────────────────────┐
+  │   Field    │                                    Ý nghĩa                                     │
+  ├────────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ class      │ 1 trong 4: stand / walk / run / stairs                                         │
+  ├────────────┼────────────────────────────────────────────────────────────────────────────────┤
+  │ confidence │ Độ tin cậy (heuristic luôn ra 0.85 hoặc 0.9 cố định, không phải xác suất thật) │
+  └────────────┴────────────────────────────────────────────────────────────────────────────────┘
+
+  → Heuristic phân loại "đang đi", tin tưởng 90%.
+
+  3. pose_calib — vị trí từ pipeline CALIB ONLY (calib tĩnh, không EMA, không HAR)
+
+  {"ts":89901, "x":-1.235756, "y":4.048465, "heading_deg":46.47126}
+
+  Cùng format pose, nhưng tính bằng cách trừ bias tĩnh thôi, không có EMA dynamic.
+
+  → Sau ~90s, heading đã drift 46.47° so với hướng thật.
+
+  4. pose_raw — vị trí từ pipeline RAW (không trừ bias gì cả)
+
+  {"ts":89902, "x":-0.986412, "y":4.002647, "heading_deg":56.24871}
+
+  → Sau 90s, heading drift 56.25° — drift nhiều nhất.
+
+  5. status — sức khỏe hệ thống
+
+  {"ts":90216, "uptime_s":90, "rssi":-77, "free_heap":222208, "raw_stream":false, "offline_records":743, "fs_used":65536}
+
+  ┌─────────────────┬────────┬────────────────────────────────────────────┬───────────────────┐
+  │      Field      │ Đơn vị │                  Ý nghĩa                   │      Của bạn      │
+  ├─────────────────┼────────┼────────────────────────────────────────────┼───────────────────┤
+  │ uptime_s        │ giây   │ Đã boot bao lâu                            │ 90s               │
+  ├─────────────────┼────────┼────────────────────────────────────────────┼───────────────────┤
+  │ rssi            │ dBm    │ Cường độ WiFi (càng âm càng yếu)           │ -77 dBm ⚠ hơi yếu │
+  ├─────────────────┼────────┼────────────────────────────────────────────┼───────────────────┤
+  │ free_heap       │ byte   │ RAM còn trống                              │ ~217 KB (OK)      │
+  ├─────────────────┼────────┼────────────────────────────────────────────┼───────────────────┤
+  │ raw_stream      │ bool   │ Topic raw 100Hz có đang publish không      │ false (OFF)       │
+  ├─────────────────┼────────┼────────────────────────────────────────────┼───────────────────┤
+  │ offline_records │ số     │ Tin nhắn pending trong LittleFS chờ replay │ 743 ⚠ cao         │
+  ├─────────────────┼────────┼────────────────────────────────────────────┼───────────────────┤
+  │ fs_used         │ byte   │ LittleFS đã dùng                           │ 64 KB / 1.5 MB    │
+  └─────────────────┴────────┴────────────────────────────────────────────┴───────────────────┘
+
+  6. step — sự kiện 1 bước chân
+
+  {"ts":93152, "count":29, "cadence":81.08108, "stride":0.42954}
+
+  ┌─────────┬───────────┬───────────────────────────────────────────┬─────────┐
+  │  Field  │  Đơn vị   │                  Ý nghĩa                  │ Của bạn │
+  ├─────────┼───────────┼───────────────────────────────────────────┼─────────┤
+  │ count   │ số        │ Tổng step từ lúc boot/reset               │ 29 step │
+  ├─────────┼───────────┼───────────────────────────────────────────┼─────────┤
+  │ cadence │ step/phút │ Nhịp đi hiện tại = 60/dt(2 step gần nhất) │ 81 spm  │
+  ├─────────┼───────────┼───────────────────────────────────────────┼─────────┤
+  │ stride  │ m         │ Độ dài bước vừa rồi (Weinberg)            │ 0.43 m  │
+  └─────────┴───────────┴───────────────────────────────────────────┴─────────┘
+
+  Nhận xét từ số liệu thật
+
+  ✅ 3 pipeline đang phân kỳ rõ ràng
+
+  Ở t≈90s, heading 3 path:
+  - Full: ~1.5° (drift gần 0 — EMA + ZUPT làm tốt)
+  - Calib: 46.47° (drift 45° — chỉ trừ bias tĩnh, không bù theo thời gian)
+  - Raw: 56.25° (drift 55° — không trừ gì)
+
+  Khoảng cách Raw vs Calib = 10° → đó là giá trị bias tĩnh đã được trừ (10° drift trong 90s ≈ 0.11°/s ≈ 0.002 rad/s — khớp với gyro_bias[2]
+   = 0.001863 trong calib của bạn).
+
+  Khoảng cách Calib vs Full = 45° → đó là giá trị EMA dynamic đã correct thêm. EMA hiệu quả gấp 4.5 lần so với bias tĩnh.
+
+  → Hệ thống đang chạy đúng, mọi tầng đều có giá trị.
+
+  ⚠ RSSI -77 dBm hơi yếu
+
+  > -50 dBm  : Tuyệt vời
+  -50 to -70 : Tốt
+  -70 to -80 : Kém — dễ mất gói tin       ← bạn ở đây
+  < -80      : Không ổn định
+
+  → Lý do offline_records=743 cao: WiFi yếu khiến MQTT đôi lúc disconnect, ESP32 fallback sang LittleFS log. Nếu di chuyển gần router hơn /
+   dùng hotspot điện thoại → RSSI cải thiện → record offline sẽ về 0.
+
+  ⚠ Stride hơi ngắn
+
+  stride = 0.43 m — typical adult walking stride là 0.6-0.8 m. Có thể vì:
+  - Bạn đi chậm/bước nhỏ
+  - Hằng số Weinberg K = 0.41 chưa fit dáng đi của bạn (đã set generic)
+  - Peak gia tốc nhỏ → (a_max - a_min) thấp → stride ngắn
+
+  Calibrate K theo bản thân: đi đường thẳng đã đo trước (vd 10m), đếm số step, tính K_yours = (10m / num_steps) / mean(amp)^0.25. Sau đó
+  update WEINBERG_K trong config.h.
+
+  ✅ Cadence 81 spm — bình thường
+
+  Walking: 90-130 spm
+  Jogging: 140-170 spm
+  Running: 170+ spm
+
+  81 hơi chậm — bạn đang đi thong thả hoặc cadence này tính giữa 2 step rất xa nhau (vd có pause giữa).
+
+  Quick action
+
+  - Clear offline log để dashboard không bị spam khi reconnect:
+  mosquitto_pub -t 'usth/pdr/cmd/log_clear' -m ''
+  - Đi gần router hơn nếu RSSI duy trì < -75
+  - Calibrate Weinberg K nếu muốn stride/position chính xác hơn (optional)

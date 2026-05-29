@@ -1,0 +1,134 @@
+code hiện tại bỏ qua nhiệt độ hoàn toàn. Cụ thể:
+  
+  ┌───────────────────────────────────────┬────────────────┐
+  │          Khía cạnh nhiệt độ           │ Có trong code? │
+  ├───────────────────────────────────────┼────────────────┤
+  │ Đọc nhiệt độ từ MPU6050 chip          │ ❌ Không       │
+  ├───────────────────────────────────────┼────────────────┤
+  │ Log/publish nhiệt độ qua MQTT         │ ❌ Không       │
+  ├───────────────────────────────────────┼────────────────┤
+  │ Compensation bias theo nhiệt độ       │ ❌ Không       │
+  ├───────────────────────────────────────┼────────────────┤
+  │ Hiển thị nhiệt độ trên dashboard/OLED │ ❌ Không       │
+  └───────────────────────────────────────┴────────────────┘
+
+  → MPU6050 có sẵn cảm biến nhiệt độ trên chip (register 0x41-0x42), nhưng mình chưa đụng tới.
+
+  Vì sao bỏ qua
+
+  Lý do 1: EMA bias đã handle gián tiếp
+
+  Chip nóng dần → gyro bias drift dần →
+    Nếu user có lúc đứng yên (HAR=STAND):
+      EMA bias EMA capture được giá trị bias mới → trừ ra
+    → drift bị correct tự động, dù không biết nhiệt độ
+
+  → Không cần biết "nhiệt độ là bao nhiêu", chỉ cần EMA chạy đủ thường xuyên là OK.
+
+  Lý do 2: Đơn giản
+
+  Compensation theo nhiệt độ cần:
+  - Thu data (temp, bias) ở nhiều nhiệt độ (vd 20°C, 25°C, 30°C, 35°C)
+  - Fit linear regression: bias = a × temp + b
+  - Lưu coefficients vào NVS
+  - Runtime: đọc temp → predict bias → trừ ra
+
+  → ~4 giờ implement + test + verify. Đáng làm nếu có thời gian dư.
+
+  Lý do 3: EMA + chip ấm ổn định = "đủ tốt"
+
+  Sau ~3-5 phút chạy, chip MPU6050 đạt steady-state temperature → bias không thay đổi nhiều nữa → EMA dễ converge. Demo trong phòng (nhiệt độ ổn định) thì không thấy vấn đề.
+
+  Khi nào nhiệt độ MATTER (mà EMA không đủ)
+
+  ┌───────────────────────────────────────────┬─────────────────────┬──────────────────────────┐
+  │                 Scenario                  │       EMA đủ?       │  Cần temp compensation?  │
+  ├───────────────────────────────────────────┼─────────────────────┼──────────────────────────┤
+  │ Demo trong phòng AC, chip steady          │ ✅                  │ Không cần                │
+  ├───────────────────────────────────────────┼─────────────────────┼──────────────────────────┤
+  │ Outdoor, nhiệt độ thay đổi nhanh          │ ⚠ Có thể không kịp  │ Nên có                   │
+  ├───────────────────────────────────────────┼─────────────────────┼──────────────────────────┤
+  │ User chạy bộ liên tục >10 phút không nghỉ │ ❌ EMA không update │ Cần                      │
+  ├───────────────────────────────────────────┼─────────────────────┼──────────────────────────┤
+  │ Báo cáo cần "thorough engineering"        │ EMA OK              │ Nên thêm cho đẹp báo cáo │
+  └───────────────────────────────────────────┴─────────────────────┴──────────────────────────┘
+
+  Có thể thêm gì nếu muốn
+
+  Level 1 — Thêm temperature vào status topic (EASY, ~20 dòng)
+
+  // imu.h
+  namespace imu {
+      float readTemperatureC();
+  }
+
+  // imu.cpp
+  float readTemperatureC() {
+      if (!i2c_bus::lock(20)) return -999.0f;
+      int16_t raw = mpu.getTemperature();
+      i2c_bus::unlock();
+      return raw / 340.0f + 36.53f;   // datasheet formula
+  }
+
+  // mqtt_client.cpp::publishStatus()
+  doc["temp_c"] = imu::readTemperatureC();
+
+  → Status topic giờ có thêm field:
+  {"ts":..., "uptime_s":90, "rssi":-77, "temp_c":31.5, ...}
+
+  Bạn observe được chip heat up từ 25°C lúc boot đến 35°C sau 10 phút. Quan sát thôi, chưa compensation, nhưng cho dashboard có thêm widget thermal monitor.
+
+  Effort: 30 phút. Đáng làm — observability tốt cho debug + báo cáo.
+
+  Level 2 — Log (temp, gyro_bias) để fit offline (MID, ~2 giờ)
+
+  Khi MILESTONE_LEVEL=3 và HAR=STAND đang chạy EMA, đồng thời log (temp, g_gz_bias_ema) mỗi vài giây.
+
+  Sau 30-60 phút chạy chip ấm dần → có scatter plot (temp, bias) → fit linear regression trong Python:
+
+  import numpy as np, pandas as pd
+  df = pd.read_csv('temp_bias_log.csv')
+  slope, intercept = np.polyfit(df['temp_c'], df['gyro_bias_z'], 1)
+  print(f"bias_z(T) = {slope}*T + {intercept}")
+
+  Có 2 số → hard-code vào firmware → runtime: bias_predicted = slope * temp + intercept.
+
+  → Bias correction không cần STAND, hoạt động kể cả khi user chạy liên tục.
+
+  Effort: ~2 giờ thu data + 30 phút fit + 30 phút deploy.
+
+  Level 3 — Full thermal model với calibration script (HIGH, ~4 giờ)
+
+  - Script Python chạy temperature stress test (heat gun + cold spray để tạo dải nhiệt độ rộng)
+  - Fit regression cho cả gyro_x, gyro_y, gyro_z + accel
+  - Lưu 6 cặp (slope, intercept) vào NVS
+  - Runtime: read temp + apply 6 compensation
+
+  → Industry-grade. Cho project sinh viên là overkill.
+
+  Khuyến nghị cho bạn
+
+  Làm Level 1 ngay — chỉ ~30 phút, được:
+  - Field temp_c trong status topic
+  - Widget thermal trên dashboard (1 ui_text node)
+  - Quan sát chip heat curve cho báo cáo
+  - Bonus knowledge: "em đã đo và observe được nhiệt độ chip"
+
+  Skip Level 2 và 3 trừ khi:
+  - Demo ngoài trời / nhiệt độ thay đổi nhanh
+  - User chạy >5 phút không nghỉ
+  - Cần "advanced engineering" để impress thầy
+
+  Trong báo cáo có thể nêu
+
+  ▎ "Hệ thống KHÔNG implement temperature compensation explicit. Lý do: EMA bias correction (constant-gain Kalman) khi HAR=STAND đã correct được gyro bias drift do nhiệt độ một cách
+  ▎ gián tiếp. Trong điều kiện demo (indoor, có lúc đứng yên), drift heading được duy trì ~3°/phút (đo trong file log_calib_mine_stand.txt).
+  ▎
+  ▎ Nếu mở rộng outdoor hoặc continuous running, em sẽ thêm temperature-aware bias compensation theo Brown & Hwang 1997 chương 8."
+
+  → Show được bạn biết trade-off + biết khi nào cần feature đó.
+
+  Tóm tắt 1 câu
+
+  Bạn nói đúng — code bỏ qua nhiệt độ. Lý do: EMA + STAND detection handle drift do nhiệt độ gián tiếp, đủ cho indoor demo. Thêm thermal monitoring (Level 1) thì dễ và đẹp; thêm
+  compensation đầy đủ (Level 2-3) thì tốn công nhưng không cần thiết với scope hiện tại.

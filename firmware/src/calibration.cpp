@@ -37,6 +37,15 @@ void clear() {
     prefs.end();
 }
 
+bool isDefault(const Data& d) {
+    for (int i = 0; i < 3; ++i) {
+        if (d.acc_bias[i]  != 0.0f) return false;
+        if (d.acc_scale[i] != 1.0f) return false;
+        if (d.gyro_bias[i] != 0.0f) return false;
+    }
+    return true;
+}
+
 void printSummary(const Data& d) {
     Serial.printf("[CAL] acc_bias  = [%.4f %.4f %.4f] m/s^2\n", d.acc_bias[0], d.acc_bias[1], d.acc_bias[2]);
     Serial.printf("[CAL] acc_scale = [%.4f %.4f %.4f]\n", d.acc_scale[0], d.acc_scale[1], d.acc_scale[2]);

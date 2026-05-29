@@ -1,0 +1,425 @@
+Quy tắc vàng của ML: training data phải giống với điều kiện deploy. Câu trả lời phụ thuộc vào cách bạn sẽ DEMO sau này.
+  
+  Phụ thuộc vị trí gắn thiết bị
+
+  ┌──────────────────────┬─────────────────────┬──────────────────────────────┐
+  │      Vị trí gắn      │ Vung tay ảnh hưởng? │     Khuyến nghị thu data     │
+  ├──────────────────────┼─────────────────────┼──────────────────────────────┤
+  │ Thắt lưng / túi quần │ Rất ít              │ Tay cứng hay vung đều OK     │
+  ├──────────────────────┼─────────────────────┼──────────────────────────────┤
+  │ Túi áo ngực / cổ     │ Ít                  │ Vung nhẹ nhàng               │
+  ├──────────────────────┼─────────────────────┼──────────────────────────────┤
+  │ Cầm tay              │ NHIỀU               │ Phải khớp với cách demo      │
+  ├──────────────────────┼─────────────────────┼──────────────────────────────┤
+  │ Cổ tay (smartwatch)  │ Cực nhiều           │ Bắt buộc thu nhiều kiểu vung │
+  └──────────────────────┴─────────────────────┴──────────────────────────────┘
+
+  Bạn nói "tay cầm thiết bị" → arm motion là tín hiệu chính mà sensor đo được, không chỉ là noise. Sai cách thu data là model breaks ngay.
+
+  Khuyên cho trường hợp cầm tay
+
+  Quy tắc 1: Thu đúng kiểu bạn sẽ demo
+
+  - Demo định cầm tay đung đưa tự nhiên → thu data với tay đung đưa tự nhiên
+  - Demo định cầm tay cứng nghiêm chỉnh → thu data cứng nghiêm chỉnh
+  - KHÔNG thu data cứng rồi demo đung đưa → model sai 100%
+
+  Quy tắc 2: Trong mỗi class, thêm 2-3 biến thể
+
+  Ví dụ class walk nên có:
+  - Walk + tay xuôi tự nhiên (50% thời gian)
+  - Walk + cầm tay nghiêm chỉnh trước ngực (30%)
+  - Walk + vung tay mạnh hơn bình thường (20%)
+
+  → Model học được "walk có nhiều kiểu, đều là walk" thay vì học chính xác 1 dáng walk.
+
+  Tương tự cho run, stand, stairs. Mỗi class có 2-3 sub-style.
+
+  Quy tắc 3: Tránh "tay làm giống class khác"
+
+  Cờ đỏ: nếu khi stand mà bạn vung tay mạnh, signal trông giống walk. Khi đó model sẽ confuse.
+
+  → Khi thu stand, giữ tay không vung dữ dội (tay xuôi, hoặc cử động nhẹ kiểu đứng nói chuyện) — phù hợp với cách demo "đứng yên tự nhiên".
+
+  Quy tắc 4: Không "perfect" quá
+
+  Đừng cố gắng "thu sạch" với từng class hoàn toàn ổn định. Real world có noise:
+  - Người đi đường có lúc dừng lại nhìn điện thoại
+  - Người chạy có lúc chậm dần để vượt qua vũng nước
+  - Người đứng có lúc lúc lắc người
+
+  → Cho phép vài giây "transition" hoặc "natural variation" trong data. Model học được boundary uyển chuyển hơn.
+
+  Quy trình thực tế cho bạn
+
+  Giả sử bạn dự định thu 5-10 phút/class:
+
+  class WALK (tổng 8 phút, chia làm 4 segments):
+    2 phút: đi tới đi lui trong hành lang, tay xuôi tự nhiên
+    2 phút: đi vòng quanh phòng, tay cầm trước ngực
+    2 phút: đi nhanh hơn 1 chút, tay vung mạnh hơn
+    2 phút: đi vừa nhìn điện thoại (tay tĩnh nhưng đang đi)
+
+  class RUN (5 phút):
+    2 phút: chạy bộ tại chỗ
+    2 phút: chạy hành lang ngắn (đến cuối, quay đầu)
+    1 phút: chạy nhanh hơn
+
+  class STAND (5 phút):
+    2 phút: đứng yên thật sự
+    2 phút: đứng nhưng cử động nhẹ (xoay đầu, lắc lư)
+    1 phút: đứng cầm tay nói chuyện (tay cử động)
+
+  class STAIRS (5 phút):
+    2.5 phút: đi cầu thang lên
+    2.5 phút: đi cầu thang xuống
+
+  → Tổng ~23 phút data, đủ cho model nhỏ.
+
+  Trace lại với feedback từ model
+
+  Sau khi train xong, demo thử:
+  - Nếu walk → run khi bạn đứng nhưng vung tay mạnh: thu thêm stand + vung tay data
+  - Nếu walk → stand khi đi chậm: thu thêm walk slow data
+  - Nếu stairs không phân biệt được với walk: thu thêm stairs data hoặc bỏ class này
+
+  ML là iterative — thu, train, test, thu thêm cái gì model thiếu.
+
+  Lưu ý nhỏ thực dụng
+
+  1. Ghi label realtime bằng phím nóng trong collect_label.py — đừng cố nhớ "tôi đi đoạn này là gì" sau khi xong.
+  2. Chuyển class thì pause 2-3 giây giữa các phiên (bấm SPACE). Khoảng transition không có nhãn rõ → bỏ đi sạch, không nhiễm dataset.
+  3. 2-3 người khác nhau càng tốt — model robust với dáng đi khác nhau. Nếu chỉ 1 mình → ít nhất 2-3 phiên khác ngày khác mood.
+  4. Vị trí cầm phải cố định trong cùng 1 session. Đừng đột nhiên đổi từ cầm phải sang cầm trái giữa chừng — sensor orientation thay đổi →
+  mỗi nửa data có signature khác.
+  5. Sạch flash của session cũ bằng log_clear trước mỗi phiên thu data mới — tránh trộn data session trước vào.
+
+  Tóm tắt 1 câu
+
+  Thu data đúng cách bạn sẽ demo, có thêm 2-3 sub-style variant trong mỗi class, không quá perfect. Cụ thể với thiết bị cầm tay: cho phép
+  vung tay tự nhiên trong walk/run, giữ tay tương đối tĩnh trong stand. Quan trọng nhất là consistent giữa training và deployment.
+  
+  --------------------------
+  
+  3 câu hỏi, để mình trả lời thẳng từng cái.
+
+  1. "Session 1 = walk tay xuôi, session 2 = walk cầm điện thoại — được nhỉ?"
+
+  Hoàn toàn được + ENCOURAGED. Thực ra đây là best practice vì:
+
+  ✅ Mỗi session tập trung 1 style → label sạch, không có transition
+  ✅ Train/val split theo file (đã có trong train_har.py) → tránh leak
+  ✅ Dễ debug: nếu sau train, walk-style-A nhận đúng mà walk-style-B sai → biết phải thu thêm style B
+
+  → Cứ tạo file riêng cho từng sub-style:
+  data/
+    walk_arms_natural.csv      ← session 1
+    walk_holding_phone.csv     ← session 2
+    walk_arms_pumping.csv      ← session 3
+    run_jogging.csv
+    stand_still.csv
+    stand_chatting.csv         ← đứng nói chuyện, tay cử động
+    stairs_up.csv
+    stairs_down.csv
+
+  Khi train, --data "data/*.csv" sẽ gộp hết. Model thấy mọi style → robust.
+
+  2. "Không được dừng lại suốt 2 phút"
+
+  Đúng — nhưng có cách handle hợp lý. 2 tình huống:
+
+  Trường hợp A: Bạn đang walk + dừng giữa chừng (vd bị quên thu)
+
+  Sai cách: cứ đứng đó, label vẫn là walk → 30 giây signal stand bị gán nhầm walk → model học sai.
+
+  Đúng cách: bấm SPACE trong collect_label.py → script tạm ngừng ghi → đứng/làm gì cũng được → bấm SPACE lần nữa → tiếp tục thu.
+
+  [LABEL] -> walk        ← bắt đầu thu walk
+  ... đang đi ...
+  SPACE                  ← pause khi muốn dừng
+  [LABEL] paused=true
+  ... đứng nghỉ uống nước ...
+  SPACE                  ← tiếp tục
+  [LABEL] paused=false
+  ... đi tiếp ...
+
+  CSV chỉ chứa rows trong lúc đang walk thật, bỏ qua đoạn pause.
+
+  Trường hợp B: Bạn cần xoay đầu/quay vòng giữa hành lang
+
+  Brief stop (1-2 giây): chấp nhận được, model tự học chịu được noise nhỏ.
+
+  Quay vòng lâu (>3s): pause + resume, hoặc thu trong sân rộng/đường vòng để không cần quay.
+
+  → Quy tắc: ghi gì → đúng cái đó. Bị "xác thực sai" là độc hại hơn data ít.
+
+  3. "Có cần gán nhãn cho data không?"
+
+  Bắt buộc, 100%. Đây là supervised learning — model cần biết "cái này là gì" mới học được phân loại.
+
+  Nhãn được gán khi nào?
+
+  Realtime trong lúc thu, không phải sau. Bằng collect_label.py:
+
+  python collect_label.py --broker 127.0.0.1 --device dev01 --out data/walk_natural.csv
+
+  Script chạy → terminal hiện hướng dẫn:
+  Phim: 1=stand 2=walk 3=run 4=stairs SPACE=pause q=quit
+
+  Bạn bấm phím 1, 2, 3, 4 → gán label cho mọi sample sắp tới:
+  [LABEL] -> walk      ← bấm 2
+  ... script ghi mọi sample CSV với cột label="walk" ...
+  ... bạn đi 2 phút ...
+  q                    ← bấm q để kết thúc
+  [DONE] 12000 rows -> data/walk_natural.csv
+
+  CSV trông như thế nào (đã có label)
+
+  ts_ms,device,ax,ay,az,gx,gy,gz,label
+  1000,dev01,0.12,9.81,0.05,0.001,0.002,0.001,walk
+  1010,dev01,0.15,9.78,0.04,0.001,0.003,0.001,walk
+  1020,dev01,0.22,9.75,0.06,0.002,0.001,0.001,walk
+  ...
+
+  Cột cuối (label) là ground truth — model dùng cái này để học "khi IMU có pattern X → đó là walk".
+
+  Nếu không gán nhãn?
+
+  CSV thiếu cột label:
+  ts_ms,device,ax,ay,az,gx,gy,gz
+  1000,dev01,0.12,9.81,0.05,...
+
+  → train_har.py sẽ crash (không biết gán nhãn nào).
+
+  Hoặc bạn có thể gán nhãn sau thủ công bằng cách mở Excel/Python, thêm cột label cho từng đoạn dòng. Nhưng:
+  - Cực kỳ tốn thời gian (12000 dòng/2 phút)
+  - Dễ sai (bạn không nhớ chính xác phút thứ mấy đang làm gì)
+
+  → Luôn dùng collect_label.py để gán realtime.
+
+  Quy trình thu data của bạn
+
+  # Khoi dong moi truong
+  cd "E:\Khoa hoc\USTH\Sensor\Project"
+  docker compose up -d mosquitto
+
+  # (Neu o MILESTONE_LEVEL = 3) bat raw stream
+  mosquitto_pub -h 10.10.14.62 -t 'usth/pdr/cmd/raw_on' -m ''
+
+  # Session 1: walk, tay xuoi tu nhien
+  cd tools
+  python collect_label.py --broker 10.10.14.62 --device dev01 --out data/walk_natural.csv
+  # -> Bam 2 (walk), di 2 phut, q de thoat
+
+  # Session 2: walk, cam dien thoai
+  python collect_label.py --broker 10.10.14.62 --device dev01 --out data/walk_phone.csv
+  # -> Bam 2 (walk), di 2 phut, q
+
+  # Session 3: stand
+  python collect_label.py --broker 10.10.14.62 --device dev01 --out data/stand.csv
+  # -> Bam 1 (stand), dung 2 phut, q
+
+  # ... lap cho cac class con lai ...
+
+  # Tat raw stream khi thu xong
+  mosquitto_pub -h 10.10.14.62 -t 'usth/pdr/cmd/raw_off' -m ''
+
+  # Train
+  python train_har.py --data "data/*.csv" --out model/ --epochs 40
+
+  Tóm tắt 3 câu hỏi
+
+  ┌───────────────────────────────────┬──────────────────────────────────────────────────────────────┐
+  │              Câu hỏi              │                             Đáp                              │
+  ├───────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ Mỗi session 1 style được chứ?     │ Được, khuyến nghị. Tạo file CSV riêng cho từng style.        │
+  ├───────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ Không được dừng lại suốt session? │ Đúng. Dừng = bấm SPACE để pause label, không để label sai.   │
+  ├───────────────────────────────────┼──────────────────────────────────────────────────────────────┤
+  │ Có cần gán nhãn?                  │ Bắt buộc. Gán realtime qua phím nóng trong collect_label.py. │
+  └───────────────────────────────────┴──────────────────────────────────────────────────────────────┘
+
+  Cốt lõi: CSV nào cũng phải có cột label. Mỗi label phải khớp đúng với những gì cảm biến đang đo tại thời điểm đó. Sai label = data độc
+  hại, training sẽ sai.
+  
+  ------------------------
+  model train là CNN nhỉ                                                                                                                   
+
+● Đúng — 1D-CNN (Convolutional Neural Network 1 chiều). Cụ thể trong tools/train_har.py::build_model():
+  
+  Input shape: (200, 6)         ← 200 timestep × 6 trục IMU
+     ↓
+  Conv1D(16, kernel=9, stride=2) + BN + ReLU + MaxPool(2)
+     ↓
+  Conv1D(32, kernel=5, stride=1) + BN + ReLU + MaxPool(2)
+     ↓
+  Conv1D(32, kernel=3) + ReLU
+     ↓
+  GlobalAveragePooling1D     ← gộp về vector cố định
+     ↓
+  Dense(32) + ReLU + Dropout(0.3)
+     ↓
+  Dense(num_classes=4, softmax) ← output: 4 xác suất stand/walk/run/stairs
+
+  Vì sao là 1D-CNN, không phải khác?
+
+  Tôi đã so sánh trong bảng trước nhưng tổng kết lại:
+
+  ┌──────────────────────────────────┬──────────────────┬───────────┬───────────────────────────────────┐
+  │              Model               │ Accuracy kỳ vọng │ RAM ESP32 │             Phù hợp?              │
+  ├──────────────────────────────────┼──────────────────┼───────────┼───────────────────────────────────┤
+  │ 1D-CNN nhỏ (đang dùng)           │ 92-95%           │ ~30 KB    │ ✅ Sweet spot                     │
+  ├──────────────────────────────────┼──────────────────┼───────────┼───────────────────────────────────┤
+  │ LSTM/GRU                         │ 90-94%           │ ~50-80 KB │ ❌ Khó quantize int8, chậm hơn    │
+  ├──────────────────────────────────┼──────────────────┼───────────┼───────────────────────────────────┤
+  │ Random Forest (feature thủ công) │ 88-92%           │ ~10 KB    │ OK nhưng phải tự thiết kế feature │
+  ├──────────────────────────────────┼──────────────────┼───────────┼───────────────────────────────────┤
+  │ Transformer nhỏ                  │ 95%+             │ 150+ KB   │ ❌ Quá to cho ESP32               │
+  ├──────────────────────────────────┼──────────────────┼───────────┼───────────────────────────────────┤
+  │ MLP đơn giản                     │ 80-85%           │ ~5 KB     │ Quá đơn giản, accuracy thấp       │
+  └──────────────────────────────────┴──────────────────┴───────────┴───────────────────────────────────┘
+
+  1D-CNN thắng vì:
+  1. Phù hợp signal tuần tự: convolution 1D trượt theo trục thời gian, học pattern cục bộ (peak step, dao động)
+  2. Translation-invariant: dù step xuất hiện đầu hay cuối window, model vẫn nhận ra (vì conv share weights)
+  3. Nhẹ: chỉ ~10K params sau quantize int8 → ~15-25 KB flash, ~30 KB RAM
+  4. Quantize tốt: TFLite int8 hỗ trợ Conv1D tối ưu cho microcontroller
+
+  Why 1D, not 2D?
+
+  CNN có 2 dạng:
+  - 2D-CNN: cho ảnh (height × width × channels) — vd ResNet, MobileNet
+  - 1D-CNN: cho chuỗi thời gian (time × channels) — vd HAR, EEG, audio
+
+  Data IMU của bạn là chuỗi thời gian 6 kênh (ax, ay, az, gx, gy, gz qua 200 timesteps). Không có spatial dimension → dùng 1D đúng hơn 2D.
+
+  Nói cách khác:
+  1D-CNN: kernel trượt dọc trục THỜI GIAN, mỗi vị trí "nhìn" 9 sample × 6 trục
+  2D-CNN: kernel trượt 2 hướng (không có hướng thứ 2 ở đây) — over-engineered
+
+  Số tham số
+
+  Đại khái:
+  Conv1D(16, k=9): 6×9×16 + 16 = 880
+  Conv1D(32, k=5): 16×5×32 + 32 = 2592
+  Conv1D(32, k=3): 32×3×32 + 32 = 3104
+  Dense(32):       32×32 + 32 = 1056
+  Dense(4):        32×4 + 4 = 132
+                              ─────
+  Tổng:                       ~7.8K params
+
+  → Sau quantize int8: ~8 KB flash cho model. Cực kỳ nhẹ. Một số "TinyML model card" cho HAR thường dùng cùng kiến trúc này.
+
+  Vì sao có Dropout, BatchNorm?
+
+  - BatchNormalization (BN): chuẩn hóa output mỗi layer → training ổn định hơn, hội tụ nhanh, ít sensitive với learning rate
+  - Dropout(0.3): trong training, random "tắt" 30% neuron → tránh overfitting, model học robust hơn
+
+  Inference: BN và Dropout hoạt động khác:
+  - BN: dùng running mean/var đã học (không tính lại)
+  - Dropout: tắt hoàn toàn (không drop nữa)
+
+  → TFLite chuyển 2 cái này về phép tính cố định khi inference → không tăng compute runtime.
+
+  Ngắn gọn cho thầy
+
+  ▎ "Em dùng 1D-CNN với 3 lớp Conv1D + Global Average Pooling + 2 Dense, output softmax 4 class. Tổng ~8K params, quantize int8, fit vào ~30 KB RAM ESP32. Kiến trúc tương tự MobileNet
+  ▎ nhưng 1 chiều, theo paper Ronao & Cho 2016 "Human Activity Recognition with Smartphone Sensors Using Deep Learning Approaches"."
+
+  → Câu này show được bạn biết tên + kiến trúc + reference paper — credibility cao.
+
+  Reference cho báo cáo
+
+  1. Ronao, C. A., & Cho, S. B. (2016). Human Activity Recognition with Smartphone Sensors Using Deep Learning Approaches. Expert Systems with Applications, 59, 235-244. — paper gốc của
+   1D-CNN cho HAR
+  2. Yang, J. B., et al. (2015). Deep convolutional neural networks on multichannel time series for human activity recognition. IJCAI. — 1D-CNN trên IMU multi-channel
+  3. Hammerla, N. Y., et al. (2016). Deep, Convolutional, and Recurrent Models for Human Activity Recognition. IJCAI. — so sánh CNN vs LSTM cho HAR
+  
+  --------------------------------
+  
+  So với int8 quantized → file lớn hơn ~3-4 lần và RAM runtime tăng ~4-5 lần.
+  
+  Bảng so sánh chi tiết
+
+  Với model 1D-CNN ~7.8K params:
+
+  ┌────────────────────┬─────────────┬──────────────────────┬────────────────────────────┬───────────────────────────────┐
+  │       Format       │ Bytes/param │ Model file (.tflite) │ Tensor arena (RAM runtime) │ Inference time @ ESP32 240MHz │
+  ├────────────────────┼─────────────┼──────────────────────┼────────────────────────────┼───────────────────────────────┤
+  │ Float32 (mặc định) │ 4 byte      │ ~30-40 KB            │ ~120 KB                    │ ~150-200 ms                   │
+  ├────────────────────┼─────────────┼──────────────────────┼────────────────────────────┼───────────────────────────────┤
+  │ Float16 (half)     │ 2 byte      │ ~15-20 KB            │ ~60-80 KB                  │ ~80-120 ms                    │
+  ├────────────────────┼─────────────┼──────────────────────┼────────────────────────────┼───────────────────────────────┤
+  │ Int8 (đang dùng)   │ 1 byte      │ ~8-15 KB             │ ~25-35 KB                  │ ~30-50 ms                     │
+  └────────────────────┴─────────────┴──────────────────────┴────────────────────────────┴───────────────────────────────┘
+
+  → Quantization int8 tiết kiệm:
+  - ~3-4× flash cho model file
+  - ~4-5× RAM cho intermediate activations
+  - ~4-5× faster inference (CPU hỗ trợ SIMD integer)
+
+  Tại sao chênh lệch RAM lớn nhất
+
+  Nhiều người nghĩ "tiết kiệm RAM = tiết kiệm bytes của weight". Sai. Quantization tiết kiệm chính ở intermediate tensor (activation giữa các layer):
+
+  Input (200, 6):           float32 = 4.8 KB    int8 = 1.2 KB
+  After Conv1D-16 (100,16): float32 = 6.4 KB    int8 = 1.6 KB
+  After Pool (50,16):       float32 = 3.2 KB    int8 = 0.8 KB
+  After Conv1D-32 (50,32):  float32 = 6.4 KB    int8 = 1.6 KB
+  ...
+
+  Tổng activations sống đồng thời ~30 KB (int8) vs ~120 KB (float32). Đây là phần tensor arena, phải fit trong SRAM ESP32 (520 KB tổng, ~370 KB usable).
+
+  Cho ESP32 cụ thể
+
+  ESP32 thường (520 KB SRAM, không PSRAM):
+  - Float32: chạy được nhưng tight — 120 KB cho arena + 80 KB cho WiFi/MQTT/PDR/window buffer = đã 200 KB. Còn dư nhưng cảnh giác.
+  - Int8: comfortable — 30 KB arena + everything else = thoải mái dưới 100 KB total.
+
+  Inference time matter nếu hop = 1s. Float32 200 ms ≈ 20% CPU core. Int8 50 ms ≈ 5% CPU core. Khác biệt rõ rệt cho power consumption.
+
+  Nói cách khác
+
+  Không quantize (float32) → model ~35 KB, RAM ~120 KB, 200 ms inference
+  Quantize int8           → model ~10 KB, RAM ~30 KB,  50 ms inference
+
+  Trade-off: mất ~1-3% accuracy (do làm tròn float → int)
+
+  Khi nào KHÔNG nên quantize
+
+  - Model rất nhỏ (< 1K params): saving không đáng so với accuracy loss
+  - Output cần độ chính xác cao: vd regression float, không phải classification
+  - Một số op không hỗ trợ int8: vd tanh, softmax accuracy giảm rõ
+
+  Cho HAR classification 4 class với CNN ~10K params: quantize int8 là no-brainer. Accuracy loss ~1% vô nghĩa so với 4× RAM saving.
+
+  Code đã handle sẵn
+
+  Trong train_har.py::quantize_to_tflite():
+
+  conv = tf.lite.TFLiteConverter.from_keras_model(model)
+  conv.optimizations = [tf.lite.Optimize.DEFAULT]
+  conv.representative_dataset = rep_data   # cần để biết range int8
+  conv.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+  conv.inference_input_type = tf.int8
+  conv.inference_output_type = tf.int8
+  tflite = conv.convert()
+
+  → Export thẳng int8. Bạn không cần đụng gì.
+
+  Nếu muốn so sánh float32 vs int8 trong báo cáo, sửa script:
+  # Float32 version (no quantize)
+  conv_fp = tf.lite.TFLiteConverter.from_keras_model(model)
+  tflite_fp = conv_fp.convert()
+  print(f"Float32 size: {len(tflite_fp)} bytes")
+
+  # Int8 version
+  # ... như cũ ...
+  print(f"Int8 size: {len(tflite)} bytes")
+
+  → In ra 2 số, đẹp cho mục "model size comparison" trong báo cáo.
+
+  Tóm tắt 1 câu
+
+  Float32 model: ~30-40 KB file + ~120 KB RAM. Int8: ~10 KB + ~30 KB. Quantize giúp ESP32 (~370 KB usable SRAM) chạy thoải mái thay vì tight. Cho HAR project, quantize là default đúng
+  đắn.

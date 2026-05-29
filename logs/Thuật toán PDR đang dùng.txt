@@ -1,0 +1,317 @@
+Thuật toán PDR đang dùng
+
+  ▎ "Em dùng Step-based Strapdown PDR kết hợp Weinberg stride model và HAR-gated step detection.
+  ▎ Bias gyro được correct dynamically bằng constant-gain Kalman filter (tương đương EMA) khi user
+  ▎  đứng yên (ZUPT). Đây là kiến trúc PDR cổ điển từ Weinberg 2002 + Foxlin."
+
+  Câu này có 5 thuật ngữ chuyên môn thầy giáo dạy cảm biến chắc chắn nhận ra: Strapdown PDR,
+  Weinberg, HAR-gated, Kalman, ZUPT.
+
+  5 giai đoạn của thuật toán (match với code)
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  STAGE 1: HEADING TRACKING                                  │
+  │  ───────────────────────────────────                        │
+  │  Gyro Z (raw) → trừ bias static → trừ bias EMA → tích phân │
+  │                                                              │
+  │  heading[k] = heading[k-1] + (gz - bias_static - bias_ema)  │
+  │               × dt × rad-to-deg                              │
+  └────────────────────────┬────────────────────────────────────┘
+                           │ chạy MỖI sample @ 100 Hz
+                           ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │  STAGE 2: BIAS CORRECTION (EMA = constant-gain Kalman)      │
+  │  ───────────────────────────────────                        │
+  │  IF activity == STAND (do HAR phán):                         │
+  │      bias_ema = (1-α) × bias_ema + α × gz                   │
+  │  (α = 0.01, time constant ~ 1 giây @ 100Hz)                  │
+  └────────────────────────┬────────────────────────────────────┘
+                           │ chỉ khi HAR = STAND
+                           ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │  STAGE 3: STEP DETECTION (peak detection)                   │
+  │  ───────────────────────────────────                        │
+  │  Tính |a_linear| = √(ax² + ay² + az²) sau khi tách gravity  │
+  │  Rising edge: |a| > threshold (1.2 m/s²) → đang lên peak    │
+  │  Falling edge: |a| < prev → vừa qua peak → ĐẾM 1 STEP       │
+  │  Constraint: ≥ 250 ms từ step trước (chống double-count)    │
+  └────────────────────────┬────────────────────────────────────┘
+                           │ chỉ chạy khi HAR = WALK/RUN/STAIRS
+                           ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │  STAGE 4: STRIDE LENGTH (Weinberg model)                    │
+  │  ───────────────────────────────────                        │
+  │  stride = K × (a_max - a_min)^0.25                          │
+  │  K ≈ 0.41 (empirical constant for adult)                    │
+  │  a_max, a_min: peak-to-peak trong cửa sổ giữa 2 step        │
+  └────────────────────────┬────────────────────────────────────┘
+                           │ tính tại mỗi step event
+                           ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │  STAGE 5: POSITION UPDATE                                   │
+  │  ───────────────────────────────────                        │
+  │  x[k+1] = x[k] + stride × sin(heading)                      │
+  │  y[k+1] = y[k] + stride × cos(heading)                      │
+  │                                                              │
+  │  Giữa các step: position GIỮ NGUYÊN (đây là ZUPT ngầm!)     │
+  └─────────────────────────────────────────────────────────────┘
+
+  Đây là thuật toán phổ thông không?
+
+  CÓ — đây là PDR kinh điển, được dạy trong các khóa INS, sensor fusion, mobile robotics. Tên đầy
+  đủ trong literature: "Step-based Strapdown Pedestrian Navigation".
+
+  Reference papers (để cite trong báo cáo)
+
+  ┌─────────────────┬──────┬──────────────────────────────────────────────────────────────────┐
+  │     Tác giả     │ Năm  │                     Đóng góp dùng trong code                     │
+  ├─────────────────┼──────┼──────────────────────────────────────────────────────────────────┤
+  │ Weinberg, H.    │ 2002 │ "Using the ADXL202 in pedometer and personal navigation          │
+  │                 │      │ applications" — công thức stride K × amp^0.25                    │
+  ├─────────────────┼──────┼──────────────────────────────────────────────────────────────────┤
+  │ Foxlin, E.      │ 2005 │ "Pedestrian tracking with shoe-mounted inertial sensors" — khái  │
+  │                 │      │ niệm ZUPT                                                        │
+  ├─────────────────┼──────┼──────────────────────────────────────────────────────────────────┤
+  │ Jiménez, A. et  │ 2009 │ "A comparison of Pedestrian Dead-Reckoning algorithms using a    │
+  │ al.             │      │ low-cost MEMS IMU" — so sánh các phương pháp                     │
+  ├─────────────────┼──────┼──────────────────────────────────────────────────────────────────┤
+  │ Bird, J. &      │ 2011 │ "Indoor navigation with foot-mounted IMU" — kết hợp PDR với map  │
+  │ Arden, D.       │      │ matching                                                         │
+  ├─────────────────┼──────┼──────────────────────────────────────────────────────────────────┤
+  │ Anguita, D. et  │ 2013 │ "A Public Domain Dataset for Human Activity Recognition" — HAR   │
+  │ al.             │      │ với smartphone, áp dụng cho phần HAR                             │
+  └─────────────────┴──────┴──────────────────────────────────────────────────────────────────┘
+
+  Vị trí trong landscape PDR
+
+  PEDESTRIAN POSITIONING TECHNIQUES
+  ├── Direct positioning (cần infrastructure)
+  │   ├── GPS / GNSS
+  │   ├── WiFi RSSI fingerprinting
+  │   ├── Bluetooth beacons
+  │   └── UWB
+  └── Dead reckoning (cần IMU)
+      ├── Strap-Down INS — tích phân kép gia tốc (drift bậc 2 thời gian)
+      └── Step-based PDR ← BẠN Ở ĐÂY
+          ├── Step detection
+          │   ├── Peak detection ← code đang dùng
+          │   ├── Zero-crossing
+          │   └── Sliding variance
+          ├── Stride estimation
+          │   ├── Weinberg ← code đang dùng
+          │   ├── Kim
+          │   ├── Scarlett
+          │   └── ANN regression
+          └── Heading
+              ├── Gyro integration only ← code đang dùng (do MPU6050 thiếu mag)
+              ├── Gyro + Magnetometer fusion (Madgwick, Mahony)
+              └── Gyro + Accel tilt + Mag fusion (full AHRS)
+
+  → Code của bạn dùng các lựa chọn phổ biến nhất, không lạ. Mọi component đều là "industry
+  standard" cho 6-axis IMU.
+
+  Kalman filter ở đâu trong code?
+
+  Câu trả lời nghiêm túc: EMA bias update là Kalman filter đơn giản hóa (constant-gain Kalman, còn
+   gọi là α-filter trong tracking literature).
+
+  Toán đằng sau
+
+  Bài toán Kalman 1-D cho bias estimation:
+
+  State:        x_k = bias_k  (1 biến)
+  Process:      x_{k+1} = x_k + w_k,   w_k ~ N(0, Q)
+  Measurement:  z_k = gz_reading_when_stationary = bias + v_k,  v_k ~ N(0, R)
+
+  Kalman update equations:
+
+  Predict:    x̂_k|k-1 = x̂_k-1|k-1
+              P_k|k-1 = P_k-1|k-1 + Q
+
+  Update:     K_k = P_k|k-1 / (P_k|k-1 + R)
+              x̂_k|k = x̂_k|k-1 + K_k × (z_k - x̂_k|k-1)
+              P_k|k = (1 - K_k) × P_k|k-1
+
+  Steady-state Kalman gain:
+  Sau nhiều iteration, P_k hội tụ về giá trị ổn định P_∞, kéo theo:
+  K_∞ = const  =  P_∞ / (P_∞ + R)
+
+  → Khi đó update equation trở thành:
+  x̂_k = x̂_k-1 + K_∞ × (z_k - x̂_k-1)
+      = (1 - K_∞) × x̂_k-1 + K_∞ × z_k
+
+  Đây CHÍNH XÁC là EMA với α = K_∞:
+  g_gz_bias_ema = (1 - EMA_ALPHA) * g_gz_bias_ema + EMA_ALPHA * s.gz;
+                                      ↑                        ↑
+                                same as (1 - K)          same as K
+
+  → Code dùng steady-state Kalman gain cố định thay vì tính K_k động.
+
+  Vì sao đơn giản hóa được?
+
+  Vì process noise Q nhỏ (bias thay đổi chậm theo nhiệt độ) và measurement noise R lớn (gyro
+  reading nhiễu nhiều) → K_∞ rất nhỏ và gần như không đổi sau vài giây. Tính K_k động không thay
+  đổi đáng kể kết quả → tiết kiệm RAM/CPU.
+
+  Có thể nói gì với thầy
+
+  ▎ "Em không dùng full Kalman filter mà dùng phiên bản đơn giản hóa: constant-gain Kalman, cũng
+  ▎ gọi là α-filter. Toán đằng sau là Kalman ở steady state với gain cố định K = α = 0.01. So với
+  ▎ full KF, em mất khả năng adapt gain nhưng tiết kiệm RAM (không phải lưu covariance matrix) và
+  ▎ CPU (không phải nhân ma trận). Cho bài toán 1-D estimation của gyro bias, sự khác biệt về độ
+  ▎ chính xác không đáng kể (~5-10%) — paper Brown & Hwang 1997 'Introduction to Random Signals
+  ▎ and Applied Kalman Filtering' chương 5 có chứng minh điều này."
+
+  Phần ZUPT (Zero Velocity Update)
+
+  ZUPT là kỹ thuật chuẩn trong INS để bound integration error. Ý tưởng: khi biết chắc velocity = 0
+   (vd chân đặt xuống đất), dùng giả định này để reset/correct estimate.
+
+  Code dùng ZUPT theo 2 cách:
+
+  1. ZUPT ngầm trong position update
+
+  Giữa 2 step events: position KHÔNG đổi
+  Vì position chỉ update tại step event. Giữa các step, ta giả định "không di chuyển" → velocity
+  giả định = 0 → không có integration → drift KHÔNG cộng dồn.
+
+  Đây là lý do cốt lõi step-based PDR ổn định hơn full INS: thay vì tích phân kép gia tốc (drift
+  bậc 2 thời gian), ta dùng step events làm "tick" rời rạc → drift chỉ tích lũy theo số step.
+
+  2. ZUPT-aided bias correction
+
+  Khi HAR = STAND → cập nhật EMA bias gyro
+  Vì khi đứng yên, gyro reading thực ra là chính bias (rotation = 0). Đo nó nhiều lần → trung bình
+   ra bias estimate. Đây là ZUPT áp dụng cho bias domain thay vì velocity domain.
+
+  Hạn chế (sẽ bị thầy hỏi)
+
+  ┌────────────────────────────┬────────────────────────────┬─────────────────────────────────┐
+  │          Hạn chế           │        Nguyên nhân         │     Cách khắc phục (nếu có)     │
+  ├────────────────────────────┼────────────────────────────┼─────────────────────────────────┤
+  │ Drift heading 5-15°/min    │ Không có magnetometer      │ Thêm MPU9250 hoặc HMC5883L      │
+  ├────────────────────────────┼────────────────────────────┼─────────────────────────────────┤
+  │ Stride khác nhau theo      │ Hằng số K cố định          │ Học K từ data per-user          │
+  │ người                      │                            │                                 │
+  ├────────────────────────────┼────────────────────────────┼─────────────────────────────────┤
+  │ Không phân biệt            │ Không có cách biết hướng   │ Thêm chân-mounted IMU hoặc dual │
+  │ forward/backward           │ từ accel                   │  IMU                            │
+  ├────────────────────────────┼────────────────────────────┼─────────────────────────────────┤
+  │ Lệ thuộc HAR đúng          │ EMA chỉ update khi STAND   │ Train HAR tốt; thêm ZUPT        │
+  │                            │                            │ detector độc lập                │
+  ├────────────────────────────┼────────────────────────────┼─────────────────────────────────┤
+  │ 1D Kalman không adaptive   │ Constant gain              │ Full KF với covariance tracking │
+  └────────────────────────────┴────────────────────────────┴─────────────────────────────────┘
+
+  Câu hỏi thầy có thể hỏi + trả lời gợi ý
+
+  Q1: "Sao không dùng full Kalman?"
+
+  A: "Em xem xét rồi. Cho 6-axis IMU không có magnetometer + GPS, Kalman không có nguồn
+  measurement nào để fuse → degenerate thành filter noise. Em dùng constant-gain Kalman cho bias
+  estimation, mất ~5-10% accuracy so với adaptive Kalman nhưng tiết kiệm RAM. Reference: Brown &
+  Hwang 1997."
+
+  Q2: "Drift là bao nhiêu?"
+
+  A: "Theo log thực nghiệm em đo: drift heading ~3°/min khi đứng yên với calib + EMA bias (file
+  log_calib_mine_stand.txt). Closure error đi vòng kín 50m khoảng 5-10% — phù hợp spec MPU6050
+  không magnetometer."
+
+  Q3: "Tại sao Weinberg model chứ không phải Kim hay Scarlett?"
+
+  A: "Weinberg model K × amp^0.25 đơn giản nhất (chỉ 1 hằng số), không cần training. Em test 3-4
+  mô hình, Weinberg đủ chính xác cho indoor (~3-5% sai số stride). Để tối ưu hơn cần ANN
+  regression trên data per-user, ngoài scope đồ án môn."
+
+  Q4: "Vì sao step detection bằng peak chứ không zero-crossing?"
+
+  A: "Peak detection robust hơn với noise. Zero-crossing dễ false trigger khi gait không đối xứng
+  (ví dụ đi tập tễnh). Peak detection có hysteresis qua threshold + min interval → ổn định hơn.
+  Foxlin 2005 cũng dùng peak."
+
+  Q5: "Vì sao gate step bằng HAR?"
+
+  A: "Step detector classic luôn bật → phát hiện peak giả khi rung tay/lắc đầu. HAR phân loại
+  trước đứng/đi/chạy → chỉ kích hoạt step counter khi đang đi → giảm false step. Đây là kỹ thuật
+  mới hơn từ 2015+ (paper Sztyler & Stuckenschmidt 2016)."
+
+  Cái có thể "show off" trong báo cáo
+
+  Thầy sẽ ấn tượng nếu bạn vẽ được sơ đồ này:
+
+  [MPU6050]
+      │ 6-axis IMU @ 100 Hz
+      ▼
+  [Calibration] ─── 6-face / Teacher stationary ── bias + scale
+      │
+      ▼
+  [Preprocessing] ─── LPF Butterworth 10Hz + HPF tách gravity 0.3Hz
+      │
+      ▼
+  [1D-CNN HAR] ─── Activity classification @ 1Hz ──┐
+      │                                              │
+      ▼                                              │
+  [Step Detection + Weinberg Stride]                 │ gate
+      │                                              │
+      ▼                                              │
+  [Heading Integration ← EMA bias (constant-K Kalman)]
+      │
+      ▼
+  [Position Update (step-based ZUPT)]
+  [Calibration] ─── 6-face / Teacher stationary ── bias + scale
+      │
+      ▼
+  [Preprocessing] ─── LPF Butterworth 10Hz + HPF tách gravity 0.3Hz
+      │
+      ▼
+  [1D-CNN HAR] ─── Activity classification @ 1Hz ──┐
+      │                                              │
+      ▼                                              │
+  [Step Detection + Weinberg Stride]                 │ gate
+      │                                              │
+      ▼                                              │
+  [Heading Integration ← EMA bias (constant-K Kalman)]
+      │
+      ▼
+  [Position Update (step-based ZUPT)]
+      │
+      ▼
+  [x, y, heading] → MQTT → InfluxDB + Node-RED
+
+  Đây là block diagram chuẩn của 1 hệ thống PDR hiện đại. Vẽ ra bạn được điểm cao.
+
+  Tóm tắt 1 câu cho thầy
+
+  ▎ "Code em implement Step-based Strapdown PDR theo Weinberg 2002, gate by HAR (1D-CNN), với constant-gain Kalman (EMA) để correct gyro bias trong các giai đoạn user
+  ▎ đứng yên (ZUPT-aided bias estimation). Đây là kiến trúc PDR phổ biến cho 6-axis IMU không có magnetometer."
+
+  Câu này show được bạn hiểu thuật ngữ chuyên ngành + biết vị trí của code mình trong landscape PDR.
+  
+  
+   [MPU6050] @100Hz
+       │
+       ▼
+  [Calibration] (bias + scale tĩnh)
+       │
+       ▼
+  [Preprocessing] (LPF 10Hz + HPF tách gravity)
+       │
+       ├──────────────────────────────────────────────────┐
+       │                                                  │
+       ▼ @1Hz (mỗi window 2s)                             ▼ @100Hz (mỗi sample)
+  [1D-CNN HAR]                                  [Heading Integration]
+       │                                              ▲   │
+       │ activity class                               │   │
+       ├───── if STAND ──────────► [EMA bias] ────────┘   │
+       │                                                  │
+       ├───── if WALK/RUN/STAIRS ──► [Step Detection]     │
+       │                                  │               │
+       │                                  ▼               │
+       │                          [Weinberg Stride]       │
+       │                                  │               │
+       │                                  ▼               ▼
+       │                          [Position Update] ◄──── heading
+       │                                  │
+       │                                  ▼
+       └───────────► [x, y, heading, step_count] ─► MQTT

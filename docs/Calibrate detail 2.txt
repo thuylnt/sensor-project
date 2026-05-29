@@ -1,0 +1,97 @@
+Q1: Calibration đơn giản là trừ hệ số?
+
+  Gần đúng — có 2 bước, không chỉ trừ. Trong imu.cpp::read():
+
+  // Accel: TRỪ bias rồi NHÂN scale
+  s.ax = (ax - g_acc_bias[0]) * g_acc_scale[0];
+  s.ay = (ay - g_acc_bias[1]) * g_acc_scale[1];
+  s.az = (az - g_acc_bias[2]) * g_acc_scale[2];
+
+  // Gyro: CHỈ trừ bias (không có scale)
+  s.gx = gx - g_gyro_bias[0];
+  s.gy = gy - g_gyro_bias[1];
+  s.gz = gz - g_gyro_bias[2];
+
+  ┌───────┬──────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────┐
+  │ Trục  │      Công thức       │                                           Lý do                                           │
+  ├───────┼──────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Accel │ (raw - bias) × scale │ Sửa cả offset và độ nhạy (chip MPU6050 đôi khi đo +9.5g hoặc +10.1g khi thực tế là 9.81g) │
+  ├───────┼──────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────┤
+  │ Gyro  │ raw - bias           │ Chỉ sửa offset. Scale gyro của MPU6050 đã trim tốt từ factory, không cần calib thêm       │
+  └───────┴──────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────┘
+
+  → "Trừ" là phần chính, "nhân scale" là refinement nhỏ. Với teacher's stationary calib thì scale luôn = 1 (không tính), nên thực tế chỉ
+  trừ.
+
+  Q2: HAR fake code ở đâu?
+
+  HAR chưa có model thật — bạn chưa thu data + train. Hiện đang có 2 phiên bản fake tùy MILESTONE_LEVEL:
+
+  Phiên bản 1 (fake siêu đơn giản) — khi MILESTONE_LEVEL ≤ 2
+
+  File: firmware/src/main.cpp, trong sensorTask():
+
+  #if MILESTONE_LEVEL <= 2
+      // Milestone 2: bypass inference, gia "walk" voi confidence 0.9.
+      inference::Result r = { ACT_WALK, 0.9f, {0.05f, 0.85f, 0.05f, 0.05f} };
+      pdr::setActivity(ACT_WALK);
+      ...
+
+  → Luôn output "walk" với confidence 0.9. Không phân tích gì.
+
+  Phiên bản 2 (heuristic) — khi MILESTONE_LEVEL = 3 (bạn đang dùng)
+
+  File: firmware/src/inference.cpp, trong hàm classify():
+
+  bool classify(float* window, Result& out) {
+      // Tinh variance cua 3 truc accel
+      float mean[3] = {0, 0, 0};
+      for (int a = 0; a < 3; ++a) {
+          for (int i = 0; i < N; ++i) mean[a] += window[i * A + a];
+          mean[a] /= N;
+      }
+      float var = 0;
+      for (int a = 0; a < 3; ++a) {
+          for (int i = 0; i < N; ++i) {
+              float d = window[i * A + a] - mean[a];
+              var += d * d;
+          }
+      }
+      float accel_rms = sqrtf(var / N);
+
+      uint8_t cls;
+      if      (accel_rms < 0.6f)  cls = ACT_STAND;
+      else if (accel_rms < 3.0f)  cls = ACT_WALK;
+      else if (accel_rms < 6.0f)  cls = ACT_STAIRS;
+      else                        cls = ACT_RUN;
+      ...
+  }
+
+  → Đếm "độ lệch chuẩn" của gia tốc trên cửa sổ 2 giây, so threshold cứng → ra class. Không phải AI, chỉ là if-else theo biên độ rung.
+
+  Phiên bản thật (chưa có) — khi MILESTONE_LEVEL = 4
+
+  Cùng file inference.cpp, nhưng nhánh #if USE_TFLITE:
+
+  #if USE_TFLITE
+    // TODO: include "model_data.h" da export tu Edge Impulse / TFLM
+    // #include <TensorFlowLite_ESP32.h>
+  #endif
+
+  → Hiện đang trống. Khi bạn train model 1D-CNN xong → model_data.h có → đổi #define USE_TFLITE 1 → đoạn này load model TFLite int8 và chạy
+   inference thật.
+
+  Tóm tắt
+
+  ┌─────────────────┬─────────────────────────────────┬─────────────────────────────────────────────────────┐
+  │ MILESTONE_LEVEL │            HAR là gì            │                     Code ở đâu                      │
+  ├─────────────────┼─────────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ 2               │ Fake "luôn walk"                │ main.cpp line ~143 (block #if MILESTONE_LEVEL <= 2) │
+  ├─────────────────┼─────────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ 3 (đang dùng)   │ Heuristic if-else theo variance │ inference.cpp function classify()                   │
+  ├─────────────────┼─────────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ 4 (chưa có)     │ 1D-CNN TFLite thật              │ inference.cpp block #if USE_TFLITE (TODO)           │
+  └─────────────────┴─────────────────────────────────┴─────────────────────────────────────────────────────┘
+
+  Phiên bản 2 và 3 đều "fake" theo nghĩa không có model trained. Phiên bản 3 thông minh hơn 1 chút (phân biệt được stand vs walk) nhưng vẫn
+   chỉ là rule-based, không học từ data.

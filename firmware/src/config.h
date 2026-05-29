@@ -12,11 +12,14 @@
 //   4 = full pipeline voi TFLite int8 model that (USE_TFLITE=1 trong inference.cpp)
 #define MILESTONE_LEVEL 3
 
-// === Calibration method khi NVS trong ===
-//   0 = khong tu calib (dung default bias=0 scale=1, hoac hard-code trong main.cpp)
-//   1 = stationary "teacher-style" (calibration::stationaryCalib()): yen Z up, 1000 mau
-//   2 = bo qua hoan toan (chap nhan default)
-// Doi sang khac, gui MQTT 'usth/pdr/cmd/calib_clear' roi reset ESP32 de calib lai.
+// === Calibration method ===
+//   0 = uu tien hardcode trong main.cpp.
+//       Neu hardcode bi bo trong (default identity) -> fallback NVS.
+//       Neu NVS cung trong -> dung default bias=0 scale=1.
+//   1 = LUON chay teacher's stationary calib khi boot (bo qua NVS va hardcode).
+//       Dung de calib lai moi lan boot - chu y phai dat ESP32 yen luc cap dien.
+//   2 = chi dung NVS. Neu NVS trong -> default.
+//       Dung khi muon nap calib qua MQTT/tool ben ngoai roi save NVS rieng.
 #define CALIB_METHOD 0
 
 // === Device ID xuat hien trong MQTT topic usth/pdr/<DEVICE_ID>/... ===

@@ -1,0 +1,116 @@
+IMU (Inertial Measurement Unit) = PHẦN CỨNG
+
+  Một loại cảm biến vật lý đo chuyển động. MPU6050 là một IMU. Cụ thể:
+
+  ┌────────────────────────┬────────────────────────────────┬────────┐
+  │        Cảm biến        │             Đo gì              │ Đơn vị │
+  ├────────────────────────┼────────────────────────────────┼────────┤
+  │ Accelerometer (3 trục) │ Gia tốc tuyến tính + trọng lực │ m/s²   │
+  ├────────────────────────┼────────────────────────────────┼────────┤
+  │ Gyroscope (3 trục)     │ Vận tốc góc                    │ rad/s  │
+  └────────────────────────┴────────────────────────────────┴────────┘
+
+  Output của IMU: 6 con số mỗi sample — ax, ay, az, gx, gy, gz.
+
+  Các IMU khác trên thị trường:
+  - MPU6050 (6-axis, accel + gyro) ← bạn đang dùng
+  - MPU9250 (9-axis, thêm magnetometer)
+  - BNO055 (9-axis + có chip fusion internal)
+  - ICM-20948 (9-axis, mới hơn)
+
+  Trong code:
+  - File imu.cpp/h = driver đọc MPU6050 qua I2C, apply calibration
+  - Output: struct ImuSample {ax, ay, az, gx, gy, gz}
+
+  PDR (Pedestrian Dead Reckoning) = THUẬT TOÁN PHẦN MỀM
+
+  Một kỹ thuật ước lượng vị trí dựa trên IMU. KHÔNG phải hardware. Là code logic xử lý số từ IMU để ra ra "bạn đang ở đâu".
+
+  Input của PDR: IMU samples (6 số/sample)
+  Output của PDR: position (x, y, heading)
+
+  Cụ thể PDR làm gì:
+  1. Step detection — phát hiện peak gia tốc → "có 1 bước"
+  2. Stride estimation — ước lượng độ dài bước (Weinberg: K * amp^0.25)
+  3. Heading integration — tích phân gyro Z theo thời gian
+  4. Position update — x += stride * sin(heading); y += stride * cos(heading)
+
+  Trong code:
+  - File pdr.cpp/h = xử lý ImuSample → ra State {x, y, heading, step_count}
+  - Input: ImuSample từ IMU
+  - Output: pdr::State
+
+  Sơ đồ quan hệ
+
+  PHẦN CỨNG                  PHẦN MỀM
+  ─────────                  ────────
+  [MPU6050]                  ImuSample {ax, ay, az, gx, gy, gz}
+      │                            ▲
+      │ I2C                        │
+      ▼                            │
+  [ESP32]  ── imu::read() ─────────┤
+                                    │
+                                    ▼
+                            pdr::update()
+                            (Step detect, stride,
+                             heading integration)
+                                    │
+                                    ▼
+                            pdr::State {x, y, heading, step_count}
+                                    │
+                                    ▼
+                            MQTT publishPose() → Node-RED canvas
+
+  Các PDR algorithm khác
+
+  PDR không chỉ có 1 cách. Là cả 1 lĩnh vực nghiên cứu:
+
+  ┌─────────────────────────────────────┬────────────┬───────────────────────────────────┐
+  │              Algorithm              │  Phức tạp  │              Phù hợp              │
+  ├─────────────────────────────────────┼────────────┼───────────────────────────────────┤
+  │ Simple step detection + integration │ Thấp       │ Project sinh viên (bạn đang dùng) │
+  ├─────────────────────────────────────┼────────────┼───────────────────────────────────┤
+  │ Kalman filter                       │ Trung bình │ Có nhiều sensor, cần fusion       │
+  ├─────────────────────────────────────┼────────────┼───────────────────────────────────┤
+  │ Particle filter                     │ Cao        │ Map matching trong nhà            │
+  ├─────────────────────────────────────┼────────────┼───────────────────────────────────┤
+  │ Deep learning (LSTM)                │ Cao        │ Có dataset lớn, train được        │
+  └─────────────────────────────────────┴────────────┴───────────────────────────────────┘
+
+  So sánh đơn giản
+
+  ▎ "IMU và PDR khác thế nào?"
+
+  ┌──────────────────────┬───────────────────────────────┬───────────────────────────────────────┐
+  │                      │              IMU              │                  PDR                  │
+  ├──────────────────────┼───────────────────────────────┼───────────────────────────────────────┤
+  │ Loại                 │ Hardware sensor               │ Software algorithm                    │
+  ├──────────────────────┼───────────────────────────────┼───────────────────────────────────────┤
+  │ Là cái gì            │ Chip vật lý đo gia tốc + gyro │ Code logic tính vị trí từ chuyển động │
+  ├──────────────────────┼───────────────────────────────┼───────────────────────────────────────┤
+  │ Input                │ Chuyển động vật lý            │ IMU samples                           │
+  ├──────────────────────┼───────────────────────────────┼───────────────────────────────────────┤
+  │ Output               │ 6 số/sample @ 100 Hz          │ x, y, heading @ 1 Hz                  │
+  ├──────────────────────┼───────────────────────────────┼───────────────────────────────────────┤
+  │ Module trong project │ imu.cpp                       │ pdr.cpp                               │
+  ├──────────────────────┼───────────────────────────────┼───────────────────────────────────────┤
+  │ Có thể thay          │ Đổi sang MPU9250              │ Đổi sang Kalman/ML PDR                │
+  └──────────────────────┴───────────────────────────────┴───────────────────────────────────────┘
+
+  Analogy đời thường
+
+  - IMU = đồng hồ đo tốc độ + đồng hồ đo góc lái trên xe (chỉ đo)
+  - PDR = bộ não bạn tính "tôi đã đi bao xa, đang ở đâu" dựa trên 2 số đó
+
+  Bạn không thể bỏ IMU → không có data thô. Bạn không thể bỏ PDR → không biến data thành "vị trí". Cần cả 2.
+
+  Tóm lại
+
+  ▎ "Tôi tưởng IMU và PDR cùng đề cập MPU6050"
+
+  Không. MPU6050 chỉ là IMU. PDR là thuật toán xử lý data từ IMU. Trong project có 2 file khác nhau (imu.cpp và pdr.cpp) cho 2 vai trò khác nhau:
+
+  - imu.cpp đọc chip MPU6050 → bạn có thể thay chip mà không đổi PDR
+  - pdr.cpp tính position từ IMU samples → bạn có thể đổi algorithm mà không đổi driver chip
+
+  → Tách rời theo nguyên tắc separation of concerns — hardware abstraction tách khỏi business logic.

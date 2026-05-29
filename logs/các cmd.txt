@@ -1,0 +1,7 @@
+Trong thư mục E:\Projects\pro-erp\design có 2 file Dev9_SRS template.xlsx và Dev9_SRS authentication.xlsx
+đây là 2 file thiết kế SRS, trong đó Dev9_SRS authentication.xlsx là file sample, file kia là template.
+Sheet Reference là thông tin mô tả  hạng mục, hãy bổ sung thêm nếu cần
+Hãy đọc file sample, và copy 1 file template ra để viết thiết kế. Đừng sửa vào 2 file gốc. 
+Đặt tên file là tên chức năng ngắn gọn. tên sheet chính trong file thiết kế cũng là tên chức năng này.
+Hãy chụp ảnh màn hình từ hệ thống thật (localhost) và đặt vào wireframe
+Hãy tạo SRS cho Employee Create.

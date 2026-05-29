@@ -243,35 +243,49 @@ void setup() {
         Serial.println("[FATAL] IMU init failed - check wiring (SDA=21 SCL=22)");
     }
 
-    calibration::Data cal;
+    calibration::Data cal;   // default-construct = identity (bias 0, scale 1)
 
-    cal.acc_bias[0]  =  2.228962032293377;
-    cal.acc_bias[1]  =  -0.21605675643130817;
-    cal.acc_bias[2]  =  0.3484534849480022;
-    cal.acc_scale[0] =  1.0131686314485033;
-    cal.acc_scale[1] =  1.0006235509045112;
-    cal.acc_scale[2] =  0.973595355743632;
-    cal.gyro_bias[0] =  -0.004370072056503011;
-    cal.gyro_bias[1] =  0.00013055574371012587;
-    cal.gyro_bias[2] =  0.0018625945139677067;
-
-    // if (calibration::load(cal)) {
-    //     Serial.println("[CAL] loaded from NVS");
-    // } else {
-        Serial.println("[CAL] NVS trong");
 #if CALIB_METHOD == 1
-        // Teacher-style: tu chay stationary calib khi NVS trong
-        if (calibration::stationaryCalib()) {
-            calibration::load(cal);
-        }
+    // ===== METHOD 1: teacher stationary, LUON chay, bo qua NVS va hardcode =====
+    Serial.println("[CAL] METHOD=1 -> teacher's stationary calib (dat ESP32 yen, Z up)");
+    if (calibration::stationaryCalib()) {
+        calibration::load(cal);  // stationaryCalib() da save -> load lai vao 'cal'
+    } else {
+        Serial.println("[CAL] stationaryCalib FAIL -> dung default bias=0 scale=1");
+    }
+
 #elif CALIB_METHOD == 2
-        Serial.println("[CAL] CALIB_METHOD=2 -> skip, dung default");
+    // ===== METHOD 2: chi NVS, neu trong thi default =====
+    if (calibration::load(cal)) {
+        Serial.println("[CAL] METHOD=2 -> loaded from NVS");
+    } else {
+        Serial.println("[CAL] METHOD=2 -> NVS trong -> dung default bias=0 scale=1");
+    }
+
 #else
-        Serial.println("[CAL] CALIB_METHOD=0 -> manual mode. Hard-code calib trong main.cpp:");
-        Serial.println("[CAL]   cal.acc_bias[]  = {...};   cal.acc_scale[] = {...};");
-        Serial.println("[CAL]   cal.gyro_bias[] = {...};   calibration::save(cal);");
+    // ===== METHOD 0 (default): hardcode > NVS > default =====
+    // Dien gia tri tu calib.json vao day. Bo trong = fallback NVS.
+    calibration::Data hardcoded;   // identity
+    hardcoded.acc_bias[0]  =  2.228962032293377f;
+    hardcoded.acc_bias[1]  =  -0.21605675643130817f;
+    hardcoded.acc_bias[2]  =  0.3484534849480022f;
+    hardcoded.acc_scale[0] =  1.0131686314485033f;
+    hardcoded.acc_scale[1] =  1.0006235509045112f;
+    hardcoded.acc_scale[2] =  0.973595355743632f;
+    hardcoded.gyro_bias[0] =  -0.004370072056503011f;
+    hardcoded.gyro_bias[1] =  0.00013055574371012587f;
+    hardcoded.gyro_bias[2] =  0.0018625945139677067f;
+
+    if (!calibration::isDefault(hardcoded)) {
+        cal = hardcoded;
+        Serial.println("[CAL] METHOD=0 -> dung hardcode trong main.cpp");
+    } else if (calibration::load(cal)) {
+        Serial.println("[CAL] METHOD=0 -> hardcode trong -> loaded from NVS");
+    } else {
+        Serial.println("[CAL] METHOD=0 -> hardcode trong + NVS trong -> default bias=0 scale=1");
+    }
 #endif
-    // }
+
     calibration::printSummary(cal);
     imu::applyCalibration(cal.acc_bias, cal.acc_scale, cal.gyro_bias);
 
