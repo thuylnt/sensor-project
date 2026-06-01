@@ -6,11 +6,11 @@
 // (variance cua accel) de dashboard van co data demo. Khi co model.h tu
 // Edge Impulse hoac TFLite Micro, doi nhanh USE_TFLITE = 1 va include model_data.h.
 
-#define USE_TFLITE 0
+#define USE_TFLITE 1
 
 #if USE_TFLITE
   // TODO: include "model_data.h" da export tu Edge Impulse / TFLM
-  // #include <TensorFlowLite_ESP32.h>
+  #include <TensorFlowLite_ESP32.h>
 #endif
 
 namespace inference {

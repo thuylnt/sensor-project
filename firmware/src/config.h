@@ -10,7 +10,7 @@
 //       -> dung de verify I2C + WiFi + MQTT + dashboard hien data
 //   3 = full pipeline voi heuristic inference (variance-based, khong can model file)
 //   4 = full pipeline voi TFLite int8 model that (USE_TFLITE=1 trong inference.cpp)
-#define MILESTONE_LEVEL 3
+#define MILESTONE_LEVEL 4
 
 // === Calibration method ===
 //   0 = uu tien hardcode trong main.cpp.
@@ -34,11 +34,13 @@
 
 // === WiFi ===
 // Sua truoc khi flash. Khong commit credentials that vao git.
-#define WIFI_SSID "USTH_Student"
-#define WIFI_PASSWORD "usth2021!"
+// #define WIFI_SSID "USTH_Student"
+// #define WIFI_PASSWORD "usth2021!"
+#define WIFI_SSID "Tien Phong"
+#define WIFI_PASSWORD "phong12345678"
 
 // === MQTT broker ===
-#define MQTT_HOST "10.10.14.62"   // IP laptop chay docker-compose
+#define MQTT_HOST "192.168.1.3"   // IP laptop chay docker-compose
 #define MQTT_PORT 1883
 #define MQTT_KEEPALIVE 30
 
